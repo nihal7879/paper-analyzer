@@ -1,0 +1,10 @@
+{
+  "name": "paper-analyzer",
+  "private": true,
+  "scripts": {
+    "dev:api": "npm --prefix apps/api run start:dev",
+    "dev:web": "npm --prefix apps/web run dev",
+    "build": "npm --prefix apps/api run build && npm --prefix apps/web run build",
+    "test": "npm --prefix apps/api test"
+  }
+}

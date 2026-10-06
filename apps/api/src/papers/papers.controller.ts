@@ -1,0 +1,148 @@
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  HttpCode,
+  Param,
+  ParseIntPipe,
+  Patch,
+  Post,
+  Query,
+  Res,
+  StreamableFile,
+  UploadedFile,
+  UploadedFiles,
+  UseGuards,
+  UseInterceptors,
+} from '@nestjs/common';
+import { FileFieldsInterceptor, FileInterceptor } from '@nestjs/platform-express';
+import type { Response } from 'express';
+import { AdminGuard } from '../auth/admin.guard.js';
+import { PdfService, type PdfQuery } from '../pdf/pdf.service.js';
+import { PapersService } from './papers.service.js';
+
+const MAX_PDF_BYTES = 50 * 1024 * 1024;
+
+/** Admin: upload, review, edit, publish. */
+@Controller('papers')
+@UseGuards(AdminGuard)
+export class PapersController {
+  constructor(private readonly papers: PapersService) {}
+
+  @Get()
+  list() {
+    return this.papers.list();
+  }
+
+  @Get(':id')
+  get(@Param('id') id: string) {
+    return this.papers.get(id);
+  }
+
+  /** Read paper details from the file name or (with AI) the cover page, before uploading. */
+  @Post('detect')
+  @HttpCode(200)
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: MAX_PDF_BYTES } }))
+  detect(@UploadedFile() file: Express.Multer.File | undefined) {
+    return this.papers.detect(file);
+  }
+
+  @Post()
+  @UseInterceptors(
+    FileFieldsInterceptor(
+      [
+        { name: 'qp', maxCount: 1 },
+        { name: 'ms', maxCount: 1 },
+      ],
+      { limits: { fileSize: MAX_PDF_BYTES } },
+    ),
+  )
+  create(@Body() body: Record<string, unknown>, @UploadedFiles() files: { qp?: Express.Multer.File[]; ms?: Express.Multer.File[] }) {
+    return this.papers.create(body, files?.qp?.[0], files?.ms?.[0]);
+  }
+
+  @Post(':id/reprocess')
+  reprocess(@Param('id') id: string) {
+    return this.papers.reprocess(id);
+  }
+
+  @Post(':id/publish')
+  @HttpCode(200)
+  publish(@Param('id') id: string) {
+    return this.papers.publish(id);
+  }
+
+  /** Bulk: mark every draft question of the paper as verified (after the admin has checked it). */
+  @Post(':id/verify-all')
+  @HttpCode(200)
+  verifyAll(@Param('id') id: string) {
+    return this.papers.verifyAll(id);
+  }
+
+  @Post(':id/unpublish')
+  @HttpCode(200)
+  unpublish(@Param('id') id: string) {
+    return this.papers.unpublish(id);
+  }
+
+  @Delete(':id')
+  @HttpCode(204)
+  async remove(@Param('id') id: string) {
+    await this.papers.remove(id);
+  }
+
+  // ---------------------------------------------------------------- questions
+
+  /** Save editor changes (only the fields sent). `verify: true` also marks it verified. */
+  @Patch(':id/questions/:qid')
+  updateQuestion(@Param('id') id: string, @Param('qid', ParseIntPipe) qid: number, @Body() body: unknown) {
+    return this.papers.updateQuestion(id, qid, body);
+  }
+
+  @Post(':id/questions/:qid/verify')
+  @HttpCode(200)
+  verify(@Param('id') id: string, @Param('qid', ParseIntPipe) qid: number, @Body() body: { verified?: unknown }) {
+    return this.papers.setVerified(id, qid, body?.verified !== false);
+  }
+
+  @Delete(':id/questions/:qid')
+  @HttpCode(204)
+  async deleteQuestion(@Param('id') id: string, @Param('qid', ParseIntPipe) qid: number) {
+    await this.papers.setDeleted(id, qid, true);
+  }
+
+  @Post(':id/questions/:qid/restore')
+  @HttpCode(204)
+  async restoreQuestion(@Param('id') id: string, @Param('qid', ParseIntPipe) qid: number) {
+    await this.papers.setDeleted(id, qid, false);
+  }
+
+  @Post(':id/questions/:qid/regenerate')
+  regenerate(@Param('id') id: string, @Param('qid', ParseIntPipe) qid: number) {
+    return this.papers.regenerate(id, qid);
+  }
+}
+
+/** Students: published questions only (no login). */
+@Controller('bank')
+export class BankController {
+  constructor(
+    private readonly papers: PapersService,
+    private readonly pdf: PdfService,
+  ) {}
+
+  @Get()
+  bank() {
+    return this.papers.bank();
+  }
+
+  /** PDF of selected questions (?ids=1,2,3) or a whole paper (?paper=slug), with answers none | end | inline. */
+  @Get('pdf')
+  async pdfFile(@Query() q: PdfQuery, @Res({ passthrough: true }) res: Response) {
+    const file = await this.pdf.render(q);
+    const name = (q.title || q.paper || 'questions').replace(/[^\w .-]+/g, '').trim().slice(0, 100) || 'questions';
+    res.set({ 'Content-Type': 'application/pdf', 'Content-Disposition': `attachment; filename="${name}.pdf"` });
+    return new StreamableFile(file);
+  }
+}
