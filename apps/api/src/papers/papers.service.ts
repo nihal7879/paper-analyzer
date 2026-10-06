@@ -153,6 +153,7 @@ export class PapersService {
     await this.storage.removeDir(`${keys.dir}/questions`);
     await this.repo.audit('PAPER_REPROCESSED', 'paper', await this.repo.paperDbId(slug), { slug });
     await this.enqueue(slug);
+    this.invalidateBank();
     return { id: slug };
   }
 
@@ -171,6 +172,7 @@ export class PapersService {
     if (this.jobs.isPending(slug)) throw new ConflictException(`Paper ${slug} is still processing`);
     const id = await this.repo.paperDbId(slug);
     await this.repo.deletePaper(slug);
+    this.invalidateBank();
     await this.storage.removeDir(paperKeys(slug).dir);
     await this.repo.audit('PAPER_DELETED', 'paper', id, { slug });
   }
@@ -179,6 +181,7 @@ export class PapersService {
     if (!(await this.repo.paperExists(slug))) throw new NotFoundException(`Paper ${slug} not found`);
     const pending = await this.repo.publish(slug);
     if (pending > 0) throw new ConflictException(`${pending} question${pending === 1 ? '' : 's'} still need verifying before publishing`);
+    this.invalidateBank();
     await this.repo.audit('PAPER_PUBLISHED', 'paper', await this.repo.paperDbId(slug), { slug });
     // Rebuild vectors + similar-question lists for this subject in the background.
     const meta = await this.repo.getMeta(slug);
@@ -186,6 +189,7 @@ export class PapersService {
     if (subject) {
       this.jobs.enqueue(`similar:${subject.id}`, async () => {
         const r = await this.similarity.refreshSubject(subject.id);
+        this.invalidateBank(); // new similar-question lists
         this.logger.log(`Similar questions refreshed for ${meta!.subjectCode}: ${r.questions} questions, ${r.embedded} embedded`);
       });
     }
@@ -195,6 +199,7 @@ export class PapersService {
   async unpublish(slug: string) {
     if (!(await this.repo.paperExists(slug))) throw new NotFoundException(`Paper ${slug} not found`);
     await this.repo.unpublish(slug);
+    this.invalidateBank();
     await this.repo.audit('PAPER_UNPUBLISHED', 'paper', await this.repo.paperDbId(slug), { slug });
     return { id: slug, published: false };
   }
@@ -227,6 +232,7 @@ export class PapersService {
     }
 
     await this.repo.updateQuestion(questionId, row.subject_id, edit as QuestionEdit, newImages, verify);
+    this.invalidateBank();
     await this.repo.audit(verify ? 'QUESTION_VERIFIED' : 'QUESTION_EDITED', 'question', questionId, { slug, fields: Object.keys(raw as object) });
     return this.repo.questionById(questionId);
   }
@@ -234,6 +240,7 @@ export class PapersService {
   async setVerified(slug: string, questionId: number, verified: boolean) {
     await this.requireQuestion(slug, questionId);
     await this.repo.setVerified(questionId, verified);
+    this.invalidateBank();
     await this.repo.audit(verified ? 'QUESTION_VERIFIED' : 'QUESTION_UNVERIFIED', 'question', questionId, { slug });
     return this.repo.questionById(questionId);
   }
@@ -242,6 +249,7 @@ export class PapersService {
     if (!(await this.repo.paperExists(slug))) throw new NotFoundException(`Paper ${slug} not found`);
     if (this.jobs.isPending(slug)) throw new ConflictException(`Paper ${slug} is processing`);
     const verified = await this.repo.verifyAll(slug);
+    this.invalidateBank();
     await this.repo.audit("PAPER_VERIFIED_ALL", "paper", await this.repo.paperDbId(slug), { slug, verified });
     return { id: slug, verified };
   }
@@ -249,6 +257,7 @@ export class PapersService {
   async setDeleted(slug: string, questionId: number, deleted: boolean) {
     await this.requireQuestion(slug, questionId);
     await this.repo.setDeleted(questionId, deleted);
+    this.invalidateBank();
     await this.repo.audit(deleted ? 'QUESTION_DELETED' : 'QUESTION_RESTORED', 'question', questionId, { slug });
   }
 
@@ -260,8 +269,28 @@ export class PapersService {
 
   // ------------------------------------------------------------------ students
 
+  /**
+   * Every student loads the whole published bank, and the database is on another server (~0.3-0.6 s a query).
+   * So the answer is kept in memory: admin changes clear it straight away, and it is rebuilt at least once a
+   * minute anyway (covers changes made outside the API, e.g. the import CLI).
+   */
+  private bankCache: { at: number; data: ReturnType<PapersRepository['publishedBank']> } | null = null;
+  private static readonly BANK_TTL_MS = 60_000;
+
   bank() {
-    return this.repo.publishedBank();
+    const c = this.bankCache;
+    if (c && Date.now() - c.at < PapersService.BANK_TTL_MS) return c.data;
+    const data = this.repo.publishedBank();
+    this.bankCache = { at: Date.now(), data };
+    // A failed query must not be cached.
+    data.catch(() => {
+      if (this.bankCache?.data === data) this.bankCache = null;
+    });
+    return data;
+  }
+
+  private invalidateBank() {
+    this.bankCache = null;
   }
 
   // ------------------------------------------------------------------ helpers

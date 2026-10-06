@@ -20,7 +20,7 @@ export interface SubjectInfo {
   board: string;
   curriculum: string;
   components: { number: number; name: string; style: string }[];
-  topics: { code: string; name: string }[];
+  topics: { code: string; name: string; subtopics?: { code: string; name: string }[] }[];
 }
 
 export interface NewPaper {
@@ -79,7 +79,15 @@ export class PapersRepository {
       .first('s.id', 's.code', 's.name', 'c.name as curriculum', 'b.name as board');
     if (!s) return null;
     const components = await this.db('components').where('subject_id', s.id).select('number', 'name', 'style').orderBy('number');
-    const topics = await this.db('topics').where({ subject_id: s.id, source: 'SYLLABUS' }).whereNull('parent_id').select('code', 'name').orderBy('sort_order');
+    const rows = await this.db('topics').where({ subject_id: s.id, source: 'SYLLABUS' }).select('id', 'parent_id', 'code', 'name').orderBy('sort_order');
+    // Topics with their syllabus subtopics, so the AI picks from the same list the student filters use.
+    const topics = rows
+      .filter((t) => t.parent_id == null)
+      .map((t) => ({
+        code: t.code,
+        name: t.name,
+        subtopics: rows.filter((st) => st.parent_id === t.id).map(({ code, name }) => ({ code, name })),
+      }));
     return { ...s, components, topics };
   }
 
@@ -311,6 +319,7 @@ export class PapersRepository {
           text: q.text,
           options: q.options.length ? JSON.stringify(q.options) : null,
           topic_id: topicId,
+          subtopic_id: await this.subtopicId(trx, topicId, q.subtopic ?? ''),
           subtopic_label: q.subtopic?.slice(0, 200) || null,
           difficulty: q.difficulty,
           page: q.page,
@@ -322,6 +331,13 @@ export class PapersRepository {
       }
       await trx('papers').where({ id: paper.id }).update({ status: 'IN_REVIEW', ai_provider: provider, ai_model: model, processed_at: trx.fn.now(), published_at: null });
     });
+  }
+
+  /** Syllabus subtopic under a topic whose name matches the label (case-insensitive), or null. */
+  private async subtopicId(trx: Knex, topicId: number | null, label: string): Promise<number | null> {
+    if (!topicId || !label.trim()) return null;
+    const row = await trx('topics').where({ parent_id: topicId }).whereRaw('LOWER(name) = ?', [label.trim().toLowerCase()]).first('id');
+    return row?.id ?? null;
   }
 
   /** Topic row for an AI/editor topic: syllabus match by code, then by name; otherwise create an AI topic. */
@@ -378,6 +394,11 @@ export class PapersRepository {
       if (edit.subtopic !== undefined) row.subtopic_label = edit.subtopic.slice(0, 200) || null;
       if (edit.topicCode !== undefined || edit.topic !== undefined) {
         row.topic_id = await this.topicId(trx, subjectId, edit.topicCode ?? null, edit.topic ?? '', new Map());
+      }
+      if (edit.subtopic !== undefined || row.topic_id !== undefined) {
+        const current = await trx('questions').where({ id: questionId }).first('topic_id', 'subtopic_label');
+        const topicId = (row.topic_id as number | null | undefined) ?? current?.topic_id ?? null;
+        row.subtopic_id = await this.subtopicId(trx, topicId, edit.subtopic ?? current?.subtopic_label ?? '');
       }
       const contentChanged = Object.keys(edit).length > 0 || newImages !== null;
       if (contentChanged) row.edited_at = trx.fn.now();
@@ -473,11 +494,14 @@ export class PapersRepository {
   private async loadQuestions(base: Knex.QueryBuilder): Promise<{ question: Question; paperId: number; order: number }[]> {
     const rows: Record<string, any>[] = await base
       .leftJoin('topics as t', 't.id', 'q.topic_id')
+      .leftJoin('topics as st', 'st.id', 'q.subtopic_id')
       .leftJoin('answers as a', 'a.question_id', 'q.id')
       .select(
         'q.*',
         't.code as topicCode',
         't.name as topicName',
+        'st.code as subtopicCode',
+        'st.name as subtopicName',
         'a.correct_option as correctOption',
         'a.text as answerText',
         'a.question_id as hasAnswer',
@@ -500,7 +524,10 @@ export class PapersRepository {
         options: r.options ?? [],
         topicCode: r.topicCode ?? null,
         topic: r.topicName ?? 'General',
-        subtopic: r.subtopic_label ?? '',
+        subtopic: r.subtopicName ?? r.subtopic_label ?? '',
+        subtopicCode: r.subtopicCode ?? null,
+        // The finer AI wording (e.g. "Drift velocity" under "Charge and current"), used by search.
+        subtopicDetail: r.subtopicName && r.subtopic_label && r.subtopic_label !== r.subtopicName ? r.subtopic_label : null,
         difficulty: r.difficulty,
         keywords: keywords.filter((k) => k.question_id === r.id).map((k) => k.keyword),
         page: r.page,

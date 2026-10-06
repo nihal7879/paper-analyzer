@@ -1,5 +1,6 @@
-import { Check, ChevronDown, Download, ExternalLink, Eye, EyeOff, FileText, Plus, RotateCcw, Sparkles, TriangleAlert, X } from "lucide-react";
+import { Check, ChevronRight, Download, ExternalLink, Eye, EyeOff, FileText, Plus, RotateCcw, Sparkles, TriangleAlert, X } from "lucide-react";
 import { memo, useState } from "react";
+import { Link } from "react-router";
 import { Collapse } from "@/components/collapse";
 import { MathText } from "@/components/math-text";
 import { PaperDownloadMenu } from "@/components/pdf-download";
@@ -30,7 +31,6 @@ export const QuestionCard = memo(function QuestionCard({
   showConfidence = false,
   className,
   similar = EMPTY,
-  onOpenSimilar,
   selectable = false,
 }: {
   question: CardQuestion;
@@ -39,30 +39,29 @@ export const QuestionCard = memo(function QuestionCard({
   className?: string;
   /** Similar questions from other papers (already resolved, best first). */
   similar?: SimilarItem[];
-  onOpenSimilar?: (item: SimilarItem) => void;
   /** Students: "Add to PDF" button and the paper download menu. */
   selectable?: boolean;
 }) {
   const [revealed, setRevealed] = useState(false);
   const [picked, setPicked] = useState<string | null>(null);
-  const [showSimilar, setShowSimilar] = useState(false);
   const correct = q.answer?.correctOption?.toUpperCase() ?? null;
   // MCQs with a known answer are answered by clicking an option; everything else shows the mark scheme.
   const quiz = q.options.length > 0 && !!correct;
   const lowConfidence = q.confidence < 0.7;
 
   return (
-    <Card className={cn("gap-0 overflow-hidden p-0", showConfidence && lowConfidence && "ring-2 ring-amber-400/60", className)}>
+    <Card className={cn("gap-0 overflow-hidden rounded-[14px] border border-foreground/12 p-0 ring-0", showConfidence && lowConfidence && "ring-2 ring-amber-400/60", className)}>
       {/* Source */}
-      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b bg-muted/40 px-4 py-2.5 text-sm sm:px-5 sm:py-2 lg:gap-y-1.5">
-        <span className="min-w-0 font-medium">{sourceLine(meta, q.number)}</span>
-        <div className="-mr-1 ml-auto flex items-center gap-1 lg:mr-0">
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b bg-muted px-4 py-3 text-sm sm:px-5">
+        <span className="min-w-0 font-semibold">{sourceLine(meta, q.number)}</span>
+        <div className="ml-auto flex items-center gap-1.5">
+          {/* The question's original exam page (opens in a new tab) */}
           <a
             href={pageImageUrl(meta.id, q.page)}
             target="_blank"
             rel="noreferrer"
-            className="hidden items-center gap-1.5 rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground sm:flex"
-            title="Open the original page"
+            className="flex h-8 items-center gap-1.5 rounded-md px-2 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground active:scale-95"
+            title="Open the original exam page"
           >
             <FileText className="size-3.5" />
             Page {q.pages.join(", ")}
@@ -79,9 +78,9 @@ export const QuestionCard = memo(function QuestionCard({
         </div>
       </div>
 
-      <div className="grid gap-4 px-4 py-4 sm:px-5 sm:py-5">
+      <div className="grid gap-3.5 px-4 py-4 sm:px-5 sm:py-5">
         {/* Badges + topic */}
-        <div className="grid gap-2">
+        <>
           <div className="flex flex-wrap items-center gap-1.5">
             <Badge variant="outline">{typeLabel[q.type]}</Badge>
             {q.marks != null && (
@@ -103,12 +102,12 @@ export const QuestionCard = memo(function QuestionCard({
             </span>
             {q.subtopic && <> › {q.subtopic}</>}
           </p>
-        </div>
+        </>
 
         {/* Question */}
         <div className="grid gap-3">
-          <p className="text-sm font-semibold text-muted-foreground">Question {q.number}</p>
-          <MathText className="text-[15px]">{q.text}</MathText>
+          {!selectable && <p className="text-sm font-semibold text-muted-foreground">Question {q.number}</p>}
+          <MathText className="text-base">{q.text}</MathText>
         </div>
 
         {q.images.map((img, i) => (
@@ -129,20 +128,20 @@ export const QuestionCard = memo(function QuestionCard({
                   <>
                     <span
                       className={cn(
-                        "mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-full border text-xs font-semibold transition-colors duration-200",
+                        "flex size-8 shrink-0 items-center justify-center rounded-full border-[1.5px] border-foreground/15 text-[13px] font-bold transition-colors duration-200",
                         isRight && "border-emerald-600 bg-emerald-600 text-white",
                         isWrong && "border-red-600 bg-red-600 text-white",
                       )}
                     >
                       {isRight ? <Check className="size-3.5" /> : isWrong ? <X className="size-3.5" /> : opt.label}
                     </span>
-                    <MathText inline className="min-w-0 flex-1">
+                    <MathText inline className="min-w-0 flex-1 text-[15px]">
                       {opt.text}
                     </MathText>
                   </>
                 );
                 const cls = cn(
-                  "flex w-full items-start gap-3 rounded-lg border px-3 py-2.5 text-left transition-[background-color,border-color,opacity] duration-200",
+                  "flex min-h-13 w-full items-center gap-3 rounded-xl border-[1.5px] border-foreground/12 px-3 py-2 text-left transition-[background-color,border-color,opacity] duration-200",
                   isRight && "border-emerald-500/70 bg-emerald-500/10",
                   isWrong && "border-red-500/70 bg-red-500/10",
                   faded && "opacity-55",
@@ -216,47 +215,19 @@ export const QuestionCard = memo(function QuestionCard({
           </div>
         )}
 
-        {/* Similar questions (by meaning, from other papers) */}
+        {/* Similar questions (by meaning, from other papers) open on their own page */}
         {similar.length > 0 && (
           <div className="border-t pt-3">
-            <button
-              type="button"
-              aria-expanded={showSimilar}
-              onClick={() => setShowSimilar((s) => !s)}
-              className="flex w-full items-center justify-between gap-2 rounded-md py-1 text-left text-sm font-medium text-primary hover:underline"
+            <Link
+              to={`/similar/${q.id}`}
+              viewTransition
+              className="flex w-full items-center justify-between gap-2 rounded-md py-1 text-sm font-medium text-primary hover:underline"
             >
               <span className="flex items-center gap-1.5">
                 <Sparkles className="size-4" /> Similar questions ({similar.length})
               </span>
-              <ChevronDown className={cn("size-4 transition-transform duration-200", showSimilar && "rotate-180")} />
-            </button>
-            {/* Only built when opened: keeps long lists light */}
-            {showSimilar && (
-              <ul className="enter-up grid gap-1.5 pt-2">
-                {similar.map((s) => (
-                  <li key={s.key}>
-                    <button
-                      type="button"
-                      onClick={() => onOpenSimilar?.(s)}
-                      className="grid w-full gap-0.5 rounded-lg border px-3 py-2 text-left transition-colors hover:bg-muted"
-                    >
-                      <span className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm font-medium">
-                        {sourceLine(s.meta, s.question.number)}
-                        <Badge variant="outline" className="font-normal">
-                          {typeLabel[s.question.type]}
-                          {s.question.marks != null ? ` · ${s.question.marks} mark${s.question.marks === 1 ? "" : "s"}` : ""}
-                        </Badge>
-                        <Badge className={cn("border-transparent font-normal", difficultyStyle[s.question.difficulty])}>{difficultyLabel(s.question.difficulty)}</Badge>
-                      </span>
-                      <span className="truncate text-xs text-muted-foreground">
-                        {s.question.topic}
-                        {s.question.subtopic ? ` › ${s.question.subtopic}` : ""}
-                      </span>
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            )}
+              <ChevronRight className="size-4" />
+            </Link>
           </div>
         )}
       </div>
@@ -273,7 +244,7 @@ function SelectButton({ id }: { id: string }) {
       aria-pressed={on}
       onClick={() => selection.toggle(id)}
       className={cn(
-        "flex h-8 items-center gap-1.5 rounded-md border px-2.5 text-xs font-medium transition-colors active:scale-95 lg:h-auto lg:px-2 lg:py-1",
+        "flex h-8 items-center gap-1.5 rounded-lg border px-3 text-xs font-semibold transition-colors active:scale-95",
         on ? "border-primary bg-primary text-primary-foreground" : "bg-background text-muted-foreground hover:border-primary/50 hover:text-foreground",
       )}
       title={on ? "Remove from PDF" : "Add to PDF"}

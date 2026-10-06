@@ -23,8 +23,8 @@ export function TopBar() {
           <span className={cn(isAdmin && "hidden md:inline")}>Paper Analyzer</span>
         </Link>
 
-        {/* Phones / tablets: students only have one page, so the tab is hidden there */}
-        <nav className={cn("flex items-center gap-1", !isAdmin && "hidden lg:flex")}>
+        {/* Students have one page, so no tabs; admins switch between Questions and Papers */}
+        <nav className={cn("flex items-center gap-1", !isAdmin && "hidden")}>
             <NavItem to="/" end icon={<LibraryBig className="size-4" />}>
               Questions
             </NavItem>

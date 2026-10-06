@@ -1,0 +1,862 @@
+=====================================================================
+           PAPER ANALYZER - PHASE 0 (DEMO) PLAN
+           Users: ~15 (demo) | Budget: near ZERO
+           Database: MySQL | No S3 | No vector DB | No Redis
+           Prepared by: Nirav Mehta | Date: 03-Oct-2026
+=====================================================================
+
+GOAL
+  Build a working demo for the client:
+  Admin uploads PDF -> AI extracts questions -> admin corrects in
+  editor (or asks AI to redo) -> publish -> students browse with
+  full filters, search, reveal answer, see source + reference image,
+  and see similar questions.
+
+  Phase 0 is built so it can grow into Phase 1 / thousands of users
+  WITHOUT rewriting (see Section 10).
+
+CONTENTS
+  1. What Sir Wants (Requirements)
+  2. Zero-Cost Decisions
+  3. Similar Questions WITHOUT Vector DB (how)
+  4. Search (how)
+  5. Tech Stack (Phase 0)
+  6. Screens & UI/UX
+  7. Flows
+  8. Database (MySQL)
+  9. Step-by-Step Build Order
+ 10. How Phase 0 Grows Later
+ 11. Open Points to Confirm with Sir
+ 12. Curriculums in Dubai (flexible DB design)
+ 13. Cambridge Paper Naming (auto-fill from file name)
+ 14. Question Card (final layout) + MCQ Reveal/Hide
+ 15. Counts / Stats ("how many papers")
+ 16. Downloads (full paper / selected questions) + My Book
+ 17. Show Content Our Way + Answer Diagrams + PDF (DECIDED)
+ 18. Similar Questions: Options and When to Switch
+
+
+---------------------------------------------------------------------
+1. WHAT SIR WANTS (REQUIREMENTS)
+---------------------------------------------------------------------
+  1. ONE app/page for everyone.
+     - Top bar has an [Upload] button.
+     - Click [Upload] -> asks password -> if admin, upload &
+       editor features open.
+     - Students do not need login; they only browse.
+  2. Upload PDF (question paper + mark scheme).
+  3. AI extracts everything:
+     question no., text (with LaTeX), MCQ options, marks, type,
+     topic, subtopic, difficulty (Easy/Medium/Hard), answer,
+     reference image (cropped diagram), page no.
+  4. EDITOR: admin verifies and corrects everything.
+     - If AI got a question wrong -> [Regenerate with AI] button
+       (optionally with a hint, e.g. "marks should be 4",
+       "diagram missing").
+     - Crop tool to fix the reference image.
+  5. Admin clicks [Publish] -> students can see it.
+  6. Filters (same style as current demo screen, multi-select):
+     Curriculum (e.g. CIE AS Level) | Subject (e.g. Physics 9702)
+     Paper(s) | Year(s) | Season(s) | Topic(s) | Subtopic(s) |
+     Type (MCQ/Theory) | Difficulty (Easy/Medium/Hard) | Marks
+     + [Clear all]. See Section 12 + 13.
+  7. Question card: source line
+       "Physics · May/June 2026 · Paper 11 · Q1"
+       + file name "9702_s26_qp_11.pdf"
+     + type badge (MCQ/Theory) + marks + topic heading +
+     difficulty + question + reference image + MCQ options +
+     [Reveal Answer] / [Hide Answer] + similar questions.
+     See Section 14.
+  8. Similar Questions on every question.
+  9. Search box -> results + similar questions.
+ 10. Very good UI/UX, responsive (mobile + desktop), fast.
+ 10a. Downloads: full original paper (QP + MS), OR select a few
+      questions -> generate our own PDF (LaTeX, images, topic +
+      topic code, page no., question no., marks, source).
+ 10b. "My Book": save questions into named books/collections,
+      view later, download a book as PDF. See Section 16.
+ 11. Database: MySQL. No S3. No extra cost.
+
+
+---------------------------------------------------------------------
+2. ZERO-COST DECISIONS
+---------------------------------------------------------------------
+  Item              Phase 0 choice                     Cost
+  ----------------  ---------------------------------  -------------
+  Hosting           Company's existing server / office  0
+                    machine (or the existing MySQL
+                    server machine if it has space)
+  Database          MySQL (existing server, new         0
+                    database "paper_analyzer_demo")
+  File storage      LOCAL DISK folder /uploads          0
+                    (PDFs, page images, cropped images)
+                    -- NO S3
+  Vector DB         NOT used. Similar questions via     0
+                    MySQL (Section 3)
+  Queue / Redis     NOT used. Simple background task    0
+                    inside NestJS + job status in MySQL
+  CDN               NOT used                            0
+  Login             Simple admin password -> JWT        0
+  AI (LLM)          Needed ONLY for extraction at       0 - very low
+                    upload. Options:
+                    a) Free tier of an LLM provider
+                       (rate limited; free tiers may use
+                       data for training - check terms)
+                    b) Paid API, pay-per-use - a demo
+                       with ~10-20 papers usually costs
+                       only a few dollars (verify current
+                       pricing)
+                    Code supports both via .env setting.
+
+  NOTE: AI cost is only when a paper is uploaded/regenerated.
+        Students browsing / searching / similar = NO AI = free.
+
+
+---------------------------------------------------------------------
+3. SIMILAR QUESTIONS WITHOUT VECTOR DB
+---------------------------------------------------------------------
+  YES, possible. For a demo it works well.
+
+  Idea: at upload time AI already gives topic, subtopic and we also
+  ask it for 5-10 CONCEPT KEYWORDS per question
+  (e.g. "momentum", "elastic collision", "impulse").
+  These are saved in MySQL. Then similarity = a scoring query.
+
+  SCORE for each candidate question:
+    + 5  same subtopic
+    + 3  same topic
+    + 2  per shared keyword
+    + 1  same question type (MCQ/Theory)
+    + 1  same difficulty
+    + FULLTEXT relevance of question text (MySQL MATCH AGAINST)
+  Show top 5, excluding the current question.
+
+  Example SQL (simplified):
+
+    SELECT q.id, q.question_number, p.year, p.season,
+      ( (q.subtopic_id = :subtopicId) * 5
+      + (q.topic_id    = :topicId)    * 3
+      + (q.question_type = :type)     * 1
+      + (q.difficulty    = :diff)     * 1
+      + 2 * (SELECT COUNT(*) FROM question_keywords k
+             WHERE k.question_id = q.id
+               AND k.keyword IN (:keywordsOfCurrent))
+      + MATCH(q.question_text) AGAINST (:currentText
+             IN NATURAL LANGUAGE MODE)
+      ) AS score
+    FROM questions q
+    JOIN papers p ON p.id = q.paper_id
+    WHERE q.status = 'PUBLISHED'
+      AND q.subject_id = :subjectId
+      AND q.id <> :currentId
+    ORDER BY score DESC
+    LIMIT 5;
+
+  Speed: precompute once on publish and save to a
+  similar_questions table (question_id, similar_id, score)
+  -> question page loads instantly.
+
+  Limitation vs vectors: two questions with the same concept but
+  totally different words AND different keywords may be missed.
+  Fine for demo. Upgrade later (Section 10) without changing UI.
+
+
+---------------------------------------------------------------------
+4. SEARCH (WITHOUT VECTOR DB)
+---------------------------------------------------------------------
+  - MySQL FULLTEXT index on question_text + answer_text + keywords
+  - Search box -> MATCH ... AGAINST (natural language mode)
+  - Combined with active filters (subject, topic, year...)
+  - Results ranked by relevance; each result card has
+    "Similar questions" link (Section 3)
+  - Keyword table also matched -> searching "collision" finds
+    questions tagged "elastic collision" even if text differs.
+
+  MySQL notes:
+  - Use InnoDB + utf8mb4 (LaTeX symbols, Arabic later)
+  - Default min word length for InnoDB fulltext is 3 characters
+    (short terms like "pH" need setting change or keyword table)
+
+
+---------------------------------------------------------------------
+5. TECH STACK (PHASE 0)
+---------------------------------------------------------------------
+  Frontend : Next.js + React + TypeScript + Tailwind CSS
+             + shadcn/ui (clean components) + KaTeX (equations)
+             + react-image-crop (crop tool)
+  Backend  : NestJS + TypeScript (REST API)
+  Database : MySQL (InnoDB, utf8mb4) + Knex or Drizzle migrations
+  PDF      : pdf.js / pdf-to-image (render pages to PNG)
+             + sharp (crop + convert to WebP)
+  AI       : Vision LLM API (provider set in .env)
+  Storage  : Local disk /uploads (served as static files)
+  Auth     : Admin password -> JWT (admin only); students open
+  Deploy   : Docker Compose OR PM2 on existing server + Nginx
+  Code     : GitLab
+
+
+---------------------------------------------------------------------
+6. SCREENS & UI/UX
+---------------------------------------------------------------------
+  A) TOP BAR (all users)
+  +---------------------------------------------------------------+
+  | LOGO  Paper Analyzer   [ Search questions...    ]  [Upload]   |
+  +---------------------------------------------------------------+
+     [Upload] -> password modal -> admin mode (badge "Admin")
+
+  B) BROWSE PAGE (students + admin)
+  Desktop:
+  +-------------------+-------------------------------------------+
+  | FILTERS           |  42 questions                  Sort: v    |
+  | Exam board   v    |  +-------------------------------------+  |
+  | Level        v    |  | Q14 | Physics 9702 | MJ 2025 | P2   |  |
+  | Subject      v    |  | Mechanics > Momentum | Hard | 5 mk  |  |
+  | Paper        v    |  | A ball of mass 2.0 kg ...            |  |
+  | Year         v    |  | [thumbnail image]                    |  |
+  | Season       v    |  +-------------------------------------+  |
+  | Topic        v    |  | Q6 ...                               |  |
+  | Subtopic     v    |  +-------------------------------------+  |
+  | Type  MCQ/Theory  |                                           |
+  | Difficulty E/M/H  |                                           |
+  | [Clear all]       |                                           |
+  +-------------------+-------------------------------------------+
+  Mobile: filters in a bottom sheet [Filters (3)] button; active
+  filters shown as removable chips.
+
+  C) QUESTION PAGE
+  +---------------------------------------------------------------+
+  | Physics 9702 > Mechanics > Momentum          Hard | 5 marks   |
+  |                                                               |
+  | Question 14(a)                                                |
+  | A ball of mass m = 2.0 kg moves with ... (KaTeX)              |
+  | [ Reference image - cropped diagram ]  (tap to zoom)          |
+  | A) ...  B) ...  C) ...  D) ...   (if MCQ)                     |
+  |                                                               |
+  |                  [ Reveal Answer ]                            |
+  |                                                               |
+  | SOURCE: Cambridge | AS Level | Physics 9702 | May/June 2025 | |
+  |         Paper 2 | Question 14 | Page 7   [View source page]   |
+  |                                                               |
+  | SIMILAR QUESTIONS                                             |
+  |  > Q7  Momentum  | ON 2024 P2 | Medium                        |
+  |  > Q12 Collisions| MJ 2023 P2 | Hard                          |
+  +---------------------------------------------------------------+
+
+  D) ADMIN: UPLOAD PAGE
+  Fields: Exam board, Level, Subject+Code, Year, Season, Paper no.,
+  Variant + Question Paper PDF + Mark Scheme PDF + [Process with AI]
+  Then live progress: "Page 5/18 ... 22 questions found"
+
+  E) ADMIN: EDITOR (most important screen)
+  +----------------------------+----------------------------------+
+  | ORIGINAL PDF PAGE (zoom)   | QUESTION 14(a)       [< Prev|Next>]
+  |                            | Text (LaTeX editor + live preview)
+  |  [page image with the      | Type   [MCQ/Theory v]  Marks [5]  |
+  |   detected crop box drawn; | Topic  [v]  Subtopic [v]          |
+  |   drag to adjust crop]     | Difficulty [Easy|Medium|Hard]     |
+  |                            | Keywords [momentum] [impulse] [+] |
+  |                            | Answer / Mark scheme (editable)   |
+  |                            | Reference image [Re-crop]         |
+  |                            |                                   |
+  |                            | [Regenerate with AI] hint: [____] |
+  |                            | [Delete] [Save] [Mark Verified]   |
+  +----------------------------+----------------------------------+
+  Top: progress "18/22 verified"  [Publish paper] (enabled when all
+  verified). Low AI-confidence questions highlighted in yellow.
+
+  UI/UX + SPEED RULES
+  - Skeleton loaders, no blank screens
+  - 20 questions per load, infinite scroll
+  - Images as WebP, lazy loaded, fixed size (no layout jump)
+  - Answer fetched only on [Reveal Answer]
+  - Filters update URL (shareable links, back button works)
+  - Filter options come from DB (only show values that exist)
+  - Dark/light mode, large tap targets on mobile
+
+
+---------------------------------------------------------------------
+7. FLOWS
+---------------------------------------------------------------------
+  A) ADMIN UPLOAD -> EDIT -> PUBLISH
+
+  [Click Upload] --> [Password modal] --> < correct? > --No--> [error]
+                                              |
+                                             Yes (JWT saved)
+                                              v
+  [Upload form: metadata + 2 PDFs]
+        |
+        v
+  [Save PDFs to /uploads/papers/{paperId}/]  [paper status=PROCESSING]
+        |
+        v
+  [Background task (inside NestJS)]
+     1. Render each page -> PNG -> /uploads/pages/{paperId}/p{n}.png
+     2. For each page -> Vision LLM -> JSON questions
+        (text+LaTeX, type, marks, options, topic, subtopic,
+         difficulty, keywords, diagram box, confidence)
+     3. Crop diagram -> WebP -> /uploads/questions/{qId}/img1.webp
+     4. Mark scheme pages -> LLM -> answers -> match by question no.
+     5. Save all as DRAFT; update job progress in MySQL
+        |
+        v
+  [Paper status = IN_REVIEW] --> [Editor]
+        |
+        v
+  FOR EACH QUESTION:
+    < Correct? > --Yes--> [Mark Verified]
+         |
+         No
+         +--> [Edit manually] --> [Save]
+         +--> [Re-crop image] --> [Save]
+         +--> [Regenerate with AI (+hint)] --> new draft shown
+                 --> < OK? > --Yes--> [Save]  --No--> edit/retry
+        |
+        v
+  < All verified? > --Yes--> [Publish]
+        |
+        v
+  [status = PUBLISHED] --> [compute similar questions] --> live
+
+  B) STUDENT
+  [Open app] --> [Filters / Search] --> [Question list]
+        --> [Question page] --> [Reveal Answer]
+                            --> [View Source]
+                            --> [Similar Questions] --> next question
+
+
+---------------------------------------------------------------------
+8. DATABASE (MYSQL, InnoDB, utf8mb4)
+---------------------------------------------------------------------
+  (Generic design - works for ANY curriculum, see Section 12)
+
+  boards          (id, name, short_name)    Cambridge (CIE), Pearson
+                                            Edexcel, IB, CBSE, MOE
+  curriculums     (id, board_id, name, short_name, sort_order)
+                                            "CIE AS Level", "CIE
+                                            IGCSE", "Edexcel IAL"
+  grades          (id, curriculum_id, name) OPTIONAL - for
+                                            curriculums using
+                                            Grade/Year/Standard
+                                            (Grade 10, Year 11...)
+  subjects        (id, curriculum_id, name, code)  Physics 9702
+  components      (id, subject_id, number, name, question_style
+                   ENUM('MCQ','THEORY','PRACTICAL','MIXED'),
+                   total_marks, duration_min)
+                   e.g. 1 = "Multiple Choice" (MCQ)
+                        2 = "AS Structured Questions" (THEORY)
+  seasons         (id, board_id, code, name, sort_order)
+                   e.g. m = Feb/March, s = May/June, w = Oct/Nov
+  topics          (id, subject_id, parent_id NULL, code, name,
+                   sort_order)
+                   parent_id NULL = topic, else = subtopic
+                   code = syllabus number, e.g. topic "6" Dynamics,
+                   subtopic "6.2" Momentum (verify vs syllabus)
+  papers          (id, subject_id, component_id, year, season_id,
+                   variant, paper_code (e.g. '11'),
+                   source_file_name (e.g. '9702_s26_qp_11.pdf'),
+                   ms_file_name (e.g. '9702_s26_ms_11.pdf'),
+                   question_pdf_path, markscheme_pdf_path,
+                   page_count, question_count, total_marks,
+                   status ENUM('PROCESSING','IN_REVIEW','PUBLISHED',
+                   'FAILED'), created_at, updated_at)
+                   UNIQUE(subject_id, year, season_id, paper_code)
+  paper_pages     (id, paper_id, page_number, image_path,
+                   kind ENUM('QP','MS'))
+  questions       (id, paper_id, subject_id, parent_id NULL,
+                   question_number, question_type
+                   ENUM('MCQ','THEORY','STRUCTURED'),
+                   question_text TEXT, marks, topic_id, subtopic_id,
+                   difficulty ENUM('EASY','MEDIUM','HARD'),
+                   page_number, ai_confidence JSON,
+                   status ENUM('DRAFT','VERIFIED','PUBLISHED'),
+                   created_at, updated_at,
+                   FULLTEXT(question_text))
+  mcq_options     (id, question_id, label CHAR(1), option_text,
+                   is_correct)
+  answers         (id, question_id, answer_text TEXT,
+                   mark_scheme_text TEXT, FULLTEXT(answer_text))
+  question_images (id, question_id, image_path, page_number,
+                   crop_box JSON, sort_order)
+  question_keywords (question_id, keyword, INDEX(keyword))
+  similar_questions (question_id, similar_question_id, score)
+  processing_jobs (id, paper_id, status, progress, message, error,
+                   created_at, updated_at)
+  admin_users     (id, name, email, password_hash)
+
+  Key indexes:
+   questions(subject_id, status), questions(topic_id),
+   questions(subtopic_id), questions(difficulty),
+   papers(subject_id, year, season, paper_number)
+
+  Files on disk (DB stores relative path only):
+   /uploads/papers/{paperId}/qp.pdf, ms.pdf
+   /uploads/pages/{paperId}/qp-p7.png
+   /uploads/questions/{questionId}/img1.webp
+
+
+---------------------------------------------------------------------
+9. STEP-BY-STEP BUILD ORDER
+---------------------------------------------------------------------
+  STEP 0  AI accuracy test (1-2 days)
+          Run 3-5 real papers (1 Physics MCQ, 1 Physics theory,
+          1 Biology) through the LLM prompt. Check text, LaTeX,
+          crop box, topics. Decide how much editing is expected.
+
+  STEP 1  Project setup
+          GitLab repo, Next.js + NestJS, MySQL database + migrations,
+          seed exam boards / levels / subjects / topic lists.
+
+  STEP 2  Upload
+          Password modal + JWT, upload form, save PDFs to disk,
+          render pages to images, job status + progress UI.
+
+  STEP 3  AI extraction
+          Vision LLM per page -> JSON -> validation -> crop images
+          -> mark scheme matching -> save as DRAFT.
+
+  STEP 4  Editor
+          Side-by-side editor, LaTeX live preview, crop tool,
+          topic/subtopic/difficulty/keywords editing,
+          [Regenerate with AI + hint], verify, publish.
+
+  STEP 5  Student browse
+          Filters (sidebar + mobile sheet), question list,
+          question page, reveal answer, source info, image zoom.
+
+  STEP 6  Search + Similar questions
+          FULLTEXT search, keyword matching, similarity scoring,
+          precompute on publish.
+
+  STEP 7  Polish
+          Responsive checks, skeleton loaders, performance,
+          empty states, error messages, demo data (5-10 papers).
+
+
+---------------------------------------------------------------------
+10. HOW PHASE 0 GROWS LATER (NO REWRITE)
+---------------------------------------------------------------------
+  Phase 0 (demo)             Later (Phase 1 -> thousands)
+  -------------------------  -----------------------------------
+  Local disk /uploads    --> S3 / R2 (swap StorageService class;
+                             DB paths stay the same format)
+  Background task in API --> BullMQ + Redis (swap JobService class)
+  Admin password only    --> Users + roles (Super Admin, Admin,
+                             Teacher, Student) + approval flow
+  Similar via MySQL score--> + embeddings (MariaDB 11.7+ vector /
+                             PostgreSQL pgvector / Qdrant);
+                             same API + UI
+  1 server               --> CDN, load balancer, more servers
+
+  Rules followed from day 1 so this works:
+  - All file access through ONE StorageService
+  - All background work through ONE JobService
+  - Config in .env (DB, storage path, LLM key)
+  - Migrations for every DB change
+  - REST API, stateless (JWT)
+
+
+---------------------------------------------------------------------
+11. OPEN POINTS TO CONFIRM WITH SIR
+---------------------------------------------------------------------
+  1. Which server/machine will host the demo?
+  2. MySQL version on the server (run: SELECT VERSION();)
+  3. AI: free tier (rate limits, data terms) or small paid usage?
+  4. Which subjects/papers for demo (suggest 5-10 papers,
+     at least one MCQ and one theory paper)?
+  5. Topic/subtopic list per subject - from official syllabus?
+  6. Students: fully open (no login) for demo - OK?
+  7. Which curriculums does the Dubai client target? (Section 12)
+     For demo we start with CIE AS Level Physics 9702.
+  8. Can students download ORIGINAL papers (rights)? (Section 16)
+  9. My Book: browser-only for demo, or simple student login?
+
+
+---------------------------------------------------------------------
+12. CURRICULUMS IN DUBAI (FLEXIBLE DB DESIGN)
+---------------------------------------------------------------------
+  Dubai private schools follow MANY curriculums. Most common
+  (to be confirmed with client):
+    - British   : Cambridge (CIE) IGCSE / AS / A Level,
+                  Pearson Edexcel (IGCSE, International A Level),
+                  AQA, OCR
+    - IB        : MYP, Diploma Programme (DP)
+    - American  : US curriculum, AP, SAT
+    - Indian    : CBSE, CISCE (ICSE / ISC)
+    - UAE MOE   : Ministry of Education curriculum
+    - Others    : French, etc.
+  British curriculum is the most common in Dubai private schools.
+
+  Different curriculums use different words:
+    Cambridge -> Level (IGCSE, AS, A Level), Paper, Variant,
+                 Season (Feb/Mar, May/Jun, Oct/Nov)
+    CBSE/ICSE -> Class/Standard (10, 12), Board exam, Set
+    American  -> Grade (9-12), AP exam
+    IB        -> SL / HL, Paper 1/2/3, Time zone
+
+  So the DB is GENERIC (Section 8):
+    Board -> Curriculum -> (optional Grade) -> Subject ->
+    Component (paper type) -> Paper (year + season + variant)
+    -> Question
+  New curriculum later = add rows in admin, NO code change.
+  Labels in UI (e.g. "Season" vs "Session", "Level" vs "Class")
+  can come from the curriculum settings.
+
+  Demo: CIE AS Level -> Physics (9702) (same as current screen).
+
+
+---------------------------------------------------------------------
+13. CAMBRIDGE PAPER NAMING (AUTO-FILL FROM FILE NAME)
+---------------------------------------------------------------------
+  Cambridge file names already contain all paper info:
+
+     9702 _ s26 _ qp _ 11 .pdf
+      |      |    |    |
+      |      |    |    +-- 11 = Paper 1, Variant 1
+      |      |    |         (12 = Paper 1 Variant 2, 21 = Paper 2
+      |      |    |          Variant 1, 42 = Paper 4 Variant 2)
+      |      |    +------- qp = question paper
+      |      |              ms = mark scheme
+      |      |              (also in, gt, er exist - ignore for now)
+      |      +------------ s = May/June (summer)
+      |                     w = Oct/Nov (winter)
+      |                     m = Feb/March
+      |                     26 = year 2026
+      +------------------- 9702 = subject code (Physics AS & A Level)
+
+  -> On upload, the system PARSES the file name and auto-fills:
+       Subject = Physics 9702, Season = May/June, Year = 2026,
+       Paper = 1 (Multiple Choice), Variant = 1, Paper code = 11
+     NO AI needed for this. Admin just confirms.
+  -> Upload both files together (9702_s26_qp_11.pdf +
+     9702_s26_ms_11.pdf) -> system pairs QP with MS automatically.
+  -> Bulk upload (many files at once) becomes easy later.
+
+  Physics 9702 components (for demo seed data, verify against
+  the current Cambridge syllabus):
+     Paper 1  Multiple Choice              (MCQ)
+     Paper 2  AS Level Structured Questions (THEORY)
+     Paper 3  Advanced Practical Skills     (PRACTICAL)
+     Paper 4  A Level Structured Questions  (THEORY)
+     Paper 5  Planning, Analysis and Evaluation (THEORY)
+  Filter "Paper(s)" shows: Paper 1 - Multiple Choice, Paper 2 ...
+  and can also filter exact code (11, 12, 13).
+
+
+---------------------------------------------------------------------
+14. QUESTION CARD (FINAL LAYOUT) + MCQ REVEAL / HIDE
+---------------------------------------------------------------------
+  A) MCQ QUESTION - before reveal
+  +---------------------------------------------------------------+
+  | Physics · May/June 2026 · Paper 11 · Q1                       |
+  | 9702_s26_qp_11.pdf · Page 2                  [View source]    |
+  |---------------------------------------------------------------|
+  | [MCQ]  [1 mark]  [Medium]                                     |
+  | Topic: Physical quantities and units > SI units               |
+  |---------------------------------------------------------------|
+  | Which quantity has the same base units as momentum?           |
+  | [ Reference image - cropped from paper, tap to zoom ]         |
+  |                                                               |
+  |   ( ) A  force x time                                         |
+  |   ( ) B  energy / time                                        |
+  |   ( ) C  mass x acceleration                                  |
+  |   ( ) D  pressure x area                                      |
+  |                                                               |
+  |                      [ Reveal Answer ]                        |
+  +---------------------------------------------------------------+
+
+  B) MCQ - after [Reveal Answer]
+  |   (*) A  force x time        <-- green highlight + tick       |
+  |   ( ) B  energy / time                                        |
+  |   ( ) C  mass x acceleration                                  |
+  |   ( ) D  pressure x area                                      |
+  |   Correct answer: A   (Source: 9702_s26_ms_11.pdf)            |
+  |                       [ Hide Answer ]                         |
+  |---------------------------------------------------------------|
+  | SIMILAR QUESTIONS                                             |
+  |  > Physics · Oct/Nov 2025 · Paper 12 · Q3 | MCQ | Medium      |
+  |  > Physics · May/June 2024 · Paper 11 · Q2 | MCQ | Easy       |
+  +---------------------------------------------------------------+
+
+  Optional practice mode (MCQ): student taps an option first ->
+  then reveal shows "Correct" / "Incorrect, answer is A".
+
+  C) THEORY / STRUCTURED QUESTION
+  +---------------------------------------------------------------+
+  | Physics · May/June 2026 · Paper 21 · Q3(b)                    |
+  | 9702_s26_qp_21.pdf · Page 7                  [View source]    |
+  | [Theory]  [4 marks]  [Hard]                                   |
+  | Topic: Dynamics > Momentum                                    |
+  |---------------------------------------------------------------|
+  | A ball of mass $m = 0.25\,kg$ hits a wall ... (KaTeX)         |
+  | [ Reference image ]                                           |
+  |                      [ Reveal Answer ]                        |
+  |---------------------------------------------------------------|
+  | after reveal:                                                 |
+  | ANSWER / MARK SCHEME (from 9702_s26_ms_21.pdf)                |
+  |   change in momentum = m(v - u) ...        B1                 |
+  |   = 1.5 N s                                 A1                |
+  |                      [ Hide Answer ]                          |
+  +---------------------------------------------------------------+
+
+  Rules:
+  - Reveal/Hide is a toggle per question (state not saved).
+  - Answer is fetched from API only on first reveal.
+  - Source line format is fixed:
+      {Subject} · {Season} {Year} · Paper {paper_code} · Q{number}
+  - Similar questions shown below every question (Section 3).
+
+  List view (browse page) shows a compact version:
+  | Physics · May/June 2026 · Paper 11 · Q1 | MCQ | 1 mark | Medium|
+  | Physical quantities and units > SI units                      |
+  | Which quantity has the same base units as momentum? ...       |
+
+
+---------------------------------------------------------------------
+15. COUNTS / STATS ("HOW MANY PAPERS")
+---------------------------------------------------------------------
+  Shown on browse page / subject page (plain SQL COUNT, no AI):
+  - Papers available: e.g. "Physics 9702: 24 papers (2021-2026)"
+  - Per paper: number of questions + total marks
+  - Results header: "42 questions · 3 papers · 2 topics selected"
+  - Per topic: number of questions (shown next to topic in filter,
+    e.g. "Dynamics (37)")
+  - Per difficulty: Easy 12 · Medium 20 · Hard 10
+  - Admin: papers by status (Processing / In review / Published)
+
+
+---------------------------------------------------------------------
+16. DOWNLOADS (FULL PAPER / SELECTED QUESTIONS) + MY BOOK
+---------------------------------------------------------------------
+  A) DOWNLOAD FULL ORIGINAL PAPER
+     On paper page / question card [View source] menu:
+       [Download Question Paper]  -> 9702_s26_qp_11.pdf
+       [Download Mark Scheme]     -> 9702_s26_ms_11.pdf
+     Served from local disk /uploads (no cost).
+     (Only if client has rights to share originals - confirm.)
+
+  B) SELECT QUESTIONS -> DOWNLOAD AS OUR OWN PDF
+     On browse page each question card has a checkbox [ ].
+     Bottom bar appears when something is selected:
+     +-------------------------------------------------------------+
+     | 6 selected   [Add to Book]   [Download PDF v]   [Clear]     |
+     +-------------------------------------------------------------+
+     Also: [Select all on this page] / [Select all results]
+
+     Download options popup:
+       Include answers:  ( ) No  ( ) After each question
+                         ( ) At the end (answer key)
+       Include images:   [x]
+       Include details:  [x] source  [x] topic + code
+                         [x] page no. [x] marks [x] difficulty
+       Title (optional): [Momentum practice      ]
+       [Generate PDF]
+
+     Generated PDF layout (A4):
+     +-------------------------------------------------------------+
+     | Momentum practice            Physics 9702 · 6 questions    |
+     | Generated: 03-Oct-2026                     Total: 18 marks  |
+     |-------------------------------------------------------------|
+     | 1.  Physics · May/June 2026 · Paper 21 · Q3(b) · Page 7     |
+     |     Topic 6.2 Dynamics > Momentum · Theory · 4 marks · Hard |
+     |                                                             |
+     |     A ball of mass m = 0.25 kg ... (LaTeX rendered)         |
+     |     [reference image]                                       |
+     |     ...................................................     |
+     |     ...................................................     |
+     |                                               [4]           |
+     |-------------------------------------------------------------|
+     | 2.  Physics · May/June 2026 · Paper 11 · Q1 · Page 2        |
+     |     Topic 1.2 Physical quantities > SI units · MCQ · 1 mark |
+     |     Which quantity ... ?                                    |
+     |     A ...   B ...   C ...   D ...                           |
+     |-------------------------------------------------------------|
+     | ANSWER KEY (if "at the end")                                |
+     |  1. change in momentum = m(v - u) ... = 1.5 N s             |
+     |  2. A                                                       |
+     |-------------------------------------------------------------|
+     | footer: page 1 / 3                                          |
+     +-------------------------------------------------------------+
+     Every question in the PDF keeps: source line, file name,
+     page no., question no., topic + topic code, type, marks,
+     difficulty (each can be switched off in options).
+
+     HOW IT IS BUILT (free):
+       - Backend makes an HTML page with KaTeX (LaTeX) + images
+       - Headless Chrome (Puppeteer / Playwright) prints it to PDF
+       - Runs as background task; progress shown; file saved in
+         /uploads/generated/ ; download link returned
+       - Same selection again -> reuse existing file
+       - Old generated files auto-deleted after e.g. 7 days
+       - Limit for demo: e.g. max 50 questions per PDF
+
+  C) MY BOOK (SAVE QUESTIONS)
+     - [Add to Book] on any question or on selected questions
+     - Create books like "Momentum revision", "Hard MCQs"
+     - My Books page: list books -> open -> questions in saved
+       order -> reorder (drag), remove, add personal note
+     - [Download book as PDF] (same generator as B)
+     - [Bookmark] icon on card = quick add to default book
+       "Saved questions"
+
+     WHERE IS IT SAVED? (students have no login in Phase 0)
+       Option 1 (demo, simplest): saved in the student's browser
+         (localStorage). Free, no login. But: lost if browser data
+         is cleared, not shared across devices.
+       Option 2 (recommended if Sir agrees): simple student login
+         (email + password) -> books saved in MySQL, available on
+         any device. Also needed in Phase 1 anyway.
+       -> Build behind one BookService so Option 1 can switch to
+          Option 2 without UI change.
+
+  D) DATABASE ADDITIONS
+     books          (id, owner_type ENUM('USER','DEVICE'),
+                     owner_id, name, created_at, updated_at)
+     book_questions (book_id, question_id, sort_order, note,
+                     added_at)
+     generated_pdfs (id, selection_hash, options JSON, file_path,
+                     question_count, created_at, expires_at)
+     downloads      (id, owner_id NULL, type ENUM('ORIGINAL_QP',
+                     'ORIGINAL_MS','CUSTOM','BOOK'), ref_id,
+                     created_at)
+
+  E) BUILD ORDER
+     Add after STEP 6:
+     STEP 6b  Selection bar + PDF generator + original downloads
+     STEP 6c  My Book (browser storage first, MySQL if login)
+
+
+---------------------------------------------------------------------
+17. SHOW CONTENT OUR WAY + ANSWER DIAGRAMS + PDF (DECIDED 05-Oct-2026)
+---------------------------------------------------------------------
+  A) RULE: SHOW EVERYTHING IN OUR OWN FORMAT
+     - Never show a screenshot of the original page as the question.
+     - Question text, MCQ options and answers are re-typed by the AI
+       and rendered by our app (our design + LaTeX via KaTeX).
+     - Images are used ONLY for diagrams / graphs / tables
+       (the "reference image"), cropped tightly from the page.
+     - Source line always shown, e.g.
+       Physics · May/June 2026 · Paper 11 · Q1 · Page 2
+     Status: DONE for questions (text + LaTeX + cropped diagrams).
+
+  B) ANSWERS FROM THE MARK SCHEME, OUR WAY (+ ANSWER DIAGRAMS)
+     - Answers come from the official mark scheme PDF (never invented
+       by the AI) and are shown in our format:
+         MCQ    -> correct letter highlighted
+         Theory -> marking points with LaTeX and mark codes (B1/M1/A1)
+     - NEW: if the mark scheme has a diagram (graph sketch, ray
+       diagram, circuit), the AI also returns its box; we crop it from
+       the mark scheme page and show it inside the answer.
+     - Admin can fix answer text and the answer diagram crop in the
+       editor (same crop tool as for questions).
+     Status: answer TEXT done. Answer DIAGRAMS to do (1 - 1.5 days):
+       mark-scheme AI output gets diagram boxes -> crop from mark
+       scheme page images -> answer images -> show in Reveal panel
+       -> crop support in editor.
+
+  C) PDF DOWNLOADS (SERVER-GENERATED, OUR FORMAT)
+     Decided:
+     - Method: the SERVER makes the PDF (headless Chrome, free), so a
+       real .pdf file downloads directly with the same look on every
+       device. The server needs Chrome / Edge installed when deployed.
+     - Students can download:
+       1. Selected questions (tick questions -> Download PDF)
+       2. Whole paper in our format (all questions, in order)
+       3. Answers option: none / after each question / answer key at
+          the end
+       4. Original board PDF (question paper + mark scheme)
+          -> ONLY if the client confirms rights to share
+     - Each question in the PDF keeps: source line, file name, page
+       no., question no., topic + topic code, type, marks, difficulty,
+       LaTeX text, diagrams, MCQ options, answer lines for written
+       questions, answers + answer diagrams (if chosen).
+
+     Flow:
+       Student selects questions (or "Download whole paper")
+         -> chooses answers option + title
+         -> API builds our A4 HTML (KaTeX + cropped images)
+         -> headless Chrome prints it to PDF (page numbers in footer)
+         -> file downloads, e.g. "Momentum practice.pdf"
+       Same selection again -> reuse the already generated file.
+
+     Status: to do (3 - 4 days):
+       PDF engine (API) 1.5 d | selection bar + download dialog 1 d |
+       whole paper + original downloads 0.5 d | testing 0.5 - 1 d
+
+  D) ORDER
+     1. Finish Step 0: process real papers with Gemini, check accuracy
+     2. Answer diagrams (B)
+     3. Step 2 MySQL: edits / publish saved on the server, so every
+        student and every PDF uses the reviewed version
+     4. PDF downloads (C)
+
+
+---------------------------------------------------------------------
+18. SIMILAR QUESTIONS: OPTIONS AND WHEN TO SWITCH
+---------------------------------------------------------------------
+  OPTIONS (all store results at publish time -> question page instant)
+
+  1. Same topic / subtopic only
+     Free, instant, no AI at view time. Weak: every question in the
+     topic looks "similar", no ranking.
+
+  2. Tags + keywords + MySQL FULLTEXT score   (current Phase 0 plan)
+     Score = same subtopic +5, same topic +3, each shared keyword +2,
+     same type +1, same difficulty +1, + text relevance.
+     Free. Good while tags are consistent.
+
+  3. Syllabus learning-outcome tags   (RECOMMENDED for exam papers)
+     The syllabus lists numbered learning outcomes, e.g.
+     "3.2(c) apply the principle of conservation of momentum".
+     At upload the AI picks the outcome codes from this FIXED list
+     (it cannot invent tags). Similar = shares the same outcome(s),
+     ranked by option 2's score.
+     Very accurate for exam questions, explainable to students
+     ("Same syllabus point 3.2c"), free at view time, also gives
+     topic analytics later. Needs the syllabus outcome list per
+     subject (one-time data entry / AI-assisted from the syllabus PDF).
+
+  4. AI re-ranking at publish time (no vector database)
+     For each new question: take the top 20 candidates from option 2/3
+     and ask the AI "which 5 test the same concept?". Store the 5.
+     High quality, AI cost only once per question when publishing.
+
+  5. Vector embeddings (meaning-based)
+     Each question -> embedding (numbers) -> nearest questions.
+     Finds same concept with completely different wording, works
+     across boards (Cambridge <-> Edexcel), enables free-text
+     semantic search. Needs embeddings API (very cheap) + vector
+     support: MariaDB 11.7+ / PostgreSQL pgvector / Qdrant.
+
+  6. Hybrid (best at large scale)
+     Vector similarity + outcome/topic match + same type, with filters.
+
+  7. Student behaviour ("students who practised this also did...")
+     Needs many active students and attempt history. Later phase.
+
+  WHEN IS EACH ENOUGH? (rough guide)
+     Questions in bank      Recommended
+     ---------------------  ------------------------------------------
+     up to ~2,000           Option 2 or 3 (free). Option 4 for extra
+     (demo, 1-3 subjects)   quality.
+     ~2,000 - ~20,000       Option 3 (+4). Still fine if tags come from
+     (several subjects)     a fixed syllabus list.
+     ~20,000+ / many boards Option 5 or 6 (vectors / hybrid).
+
+  The count is not the main trigger. Switch to vectors when ANY of:
+     - tags become inconsistent and admins keep fixing similar lists
+     - you want similar questions ACROSS boards (Cambridge vs Edexcel)
+     - you want a free-text search box that understands meaning
+       ("ball bounces off wall" finds "sphere rebounds from surface")
+  Note: even 50,000 questions is small for vector search, so speed is
+  not the issue; accuracy and features are.
+
+  PLAN
+     Phase 0 (demo): Option 3 if syllabus outcomes are available,
+                     otherwise Option 2. Optional Option 4.
+     Phase 2+:       add embeddings (Option 5/6) when a trigger above
+                     happens. Same "Similar questions" UI, only the
+                     scoring service changes.
+
+=====================================================================
+                               END
+=====================================================================

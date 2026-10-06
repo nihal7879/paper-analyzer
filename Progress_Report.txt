@@ -1,0 +1,139 @@
+=====================================================================
+          PAPER ANALYZER - PHASE 0 (DEMO) - PROGRESS REPORT
+          Prepared by: Nirav Mehta | Date: 03-Oct-2026
+=====================================================================
+
+1. SUMMARY
+---------------------------------------------------------------------
+- Working demo app built for the Dubai client's past-paper analyzer.
+- Done: Step 1 (upload + AI processing), Step 3 (admin review editor,
+  UI), Step 4 (student question browser, UI).
+- Runs locally at no cost: one machine, files on local disk, AI in
+  "mock" mode (sample data) until the OpenAI API key is added.
+- Pending: real AI test (needs key + PDFs), MySQL database, search +
+  similar questions, downloads / My Book.
+
+
+2. TECH STACK (FINAL FOR PHASE 0)
+---------------------------------------------------------------------
+- Frontend : React + Vite + TypeScript, React Router, Tailwind CSS,
+             shadcn/ui (Base UI), KaTeX (LaTeX), TanStack Query
+             (switched from Next.js to plain React as decided)
+- Backend  : NestJS + TypeScript (REST API)
+- PDF      : pdf-to-img (Mozilla pdf.js) for page images, sharp for
+             cropping diagrams to WebP
+- AI       : OpenAI API (vision model, structured JSON output);
+             "mock" mode for development - switch in .env only
+- Storage  : Local disk D:/paper-analyzer-storage (no S3 for demo)
+- Database : MySQL (Step 2, not started). Data is in JSON files now,
+             same shape as the planned tables.
+- No Redis / BullMQ / vector DB / CDN in Phase 0 (zero cost).
+  Code keeps one StorageService and one JobService so S3 and BullMQ
+  can be plugged in later without rewriting.
+
+
+3. PROJECT STRUCTURE & HOW TO RUN
+---------------------------------------------------------------------
+  D:\paper analyzer\
+    apps\api   NestJS backend      -> http://localhost:4100/api
+    apps\web   React + Vite UI     -> http://localhost:3000
+    .env       shared settings (port, password, AI key, storage path)
+
+  Run:  npm run dev:api   and   npm run dev:web
+  Admin password (demo): set in .env (ADMIN_PASSWORD)
+  Note: port 4000 is used by another app on this PC, so API uses 4100.
+
+
+4. STEP 1 - UPLOAD & AI PROCESSING (DONE)
+---------------------------------------------------------------------
+- "Upload" button in navbar asks for admin password.
+- Drag & drop Question Paper + Mark Scheme PDF.
+- Paper details auto-filled from Cambridge file name
+  (9702_s26_qp_11.pdf -> Physics 9702, May/June 2026, Paper 1
+  Multiple Choice, variant 1). No AI needed for this.
+- Duplicate paper check with "Replace" option.
+- Background processing with live progress:
+    render pages -> AI reads each page -> questions (text with LaTeX,
+    MCQ options, marks, type, topic + code, subtopic, difficulty,
+    keywords) -> crop diagrams -> read mark scheme -> match answers.
+- Retries / failure message / "Re-process" option.
+- Backend tests: 13 unit tests passing.
+
+
+5. STEP 3 - ADMIN REVIEW EDITOR (UI DONE)
+---------------------------------------------------------------------
+- Papers page: counts (papers / to review / published), progress per
+  paper ("3/4 verified", Ready to publish, Published).
+- Review page per paper:
+  * Question list with status (verified / to review / AI unsure).
+  * Original PDF page next to the form; zoom; drag on the page to
+    draw / fix the diagram crop; remove crops.
+  * Edit type, marks, difficulty, topic (syllabus list), subtopic,
+    keywords, question text, MCQ options + correct answer,
+    answer / mark scheme - with live LaTeX preview.
+  * "Student view" tab shows exactly what students will see.
+  * Save, Save & verify (goes to next question), Discard,
+    Delete with Undo. Shortcuts: Ctrl+S, Ctrl+Enter.
+  * Publish only when all questions are verified; Unpublish,
+    Re-process, Delete paper (with confirmation dialogs).
+  * "Regenerate with AI" dialog ready (backend part pending).
+- NOTE: edits / publish are saved in the browser for now; they move
+  to the database in Step 2 (screens stay the same).
+
+
+6. STEP 4 - STUDENT QUESTION BROWSER (UI DONE)
+---------------------------------------------------------------------
+- Students see only published papers (admins can preview drafts).
+- Filter side panel (like an online shop), collapsible:
+  Curriculum, Subject, Topic (with search), Paper, Year, Season,
+  Question type, Difficulty - each option shows question count.
+- Mobile: "Filters" button opens a drawer.
+- Active filter chips, Clear all, sort (newest / oldest / by topic),
+  filters saved in URL (shareable link), auto-load while scrolling.
+- Question card: source line "Physics · May/June 2026 · Paper 11 · Q1",
+  file name + page (opens original page), type / marks / difficulty
+  badges, topic heading, LaTeX text, cropped diagram, MCQ options,
+  Reveal / Hide answer (correct MCQ option turns green, or mark
+  scheme for theory).
+
+
+7. UI / UX & PERFORMANCE WORK
+---------------------------------------------------------------------
+- Clean responsive design: desktop, tablet, mobile; light + dark mode.
+- Page title moved into navbar to give more space to questions.
+- Smooth motion: page fade transitions, sliding filter sections and
+  answer panel, cards / images fade in, scroll position remembered;
+  all motion off for users with "reduce motion".
+- Slim 6px scrollbars; no layout jump when dialogs open.
+- Fast loading: each page loads its own code (home ~100 KB gzipped),
+  answers / heavy parts only when needed.
+- Friendly error page with auto-recovery; loading skeletons.
+- Checked with automated browser walkthrough: no console errors.
+
+
+8. NEXT STEPS & DECISIONS NEEDED
+---------------------------------------------------------------------
+Next steps (estimate, 1 developer):
+  Step 0  Test real AI on 3-5 real papers ............ 1-2 days
+  Step 2  MySQL database + connect editor/publish .... 2-3 days
+  Step 5  Search + similar questions (tags + MySQL) .. 2-3 days
+  Step 3b Answer diagrams from mark scheme ........... 1-1.5 days
+  Step 6  PDF downloads, server-generated, our format:
+          selected questions / whole paper / answers
+          option / original PDF (if rights) .......... 3-4 days
+          + My Book .................................. 1-2 days
+  (details: Phase0_Demo_Plan.txt sections 17 and 18)
+  Step 7  Polish, mobile checks, demo data ........... 2-3 days
+
+Needed from Sir / client:
+  1. AI key: Gemini key works for testing (free, 5 calls/min);
+     a paid key is needed for real client use
+  2. 3-5 real PDFs with mark schemes (MCQ + theory papers)
+  3. MySQL server details + version (SELECT VERSION();)
+  4. Which curriculums / subjects for the demo
+  5. Rights to share original papers (for download feature)
+  6. My Book: browser-only for demo, or simple student login
+
+=====================================================================
+                                END
+=====================================================================

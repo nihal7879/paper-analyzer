@@ -2,7 +2,9 @@ import type { PageContext } from './ai.types.js';
 
 export function questionPagePrompt(ctx: PageContext): string {
   const topicList = ctx.topics.length
-    ? ctx.topics.map((t) => `${t.code}. ${t.name}`).join('\n')
+    ? ctx.topics
+        .map((t) => [`${t.code}. ${t.name}`, ...(t.subtopics ?? []).map((s) => `    - ${s.name}`)].join('\n'))
+        .join('\n')
     : '(no fixed list — choose a sensible syllabus topic name and set topic_code to null)';
 
   return `You are extracting exam questions from page ${ctx.pageNumber} of ${ctx.pageCount} of a past paper.
@@ -19,7 +21,7 @@ Rules:
 - diagrams: tight bounding box around each figure, graph, circuit or table that belongs to the question (fractions of the page, top-left origin). Do not include the question text in the box. Empty array if none.
 - topic_code/topic: choose ONLY from this syllabus topic list:
 ${topicList}
-- subtopic: a short, specific syllabus subtopic (e.g. "Momentum and impulse").
+- subtopic: if the chosen topic lists subtopics, copy the best-fitting one EXACTLY as written. Only if none fits, write a short, specific syllabus subtopic (e.g. "Momentum and impulse").
 - difficulty: EASY (recall / one step), MEDIUM (two or three steps), HARD (multi-step, unfamiliar context or synthesis).
 - keywords: 5-10 lowercase concept keywords a student might search for.
 - confidence: lower it if text is hard to read or the layout is unusual.`;

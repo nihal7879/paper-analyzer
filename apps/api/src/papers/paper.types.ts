@@ -69,6 +69,10 @@ export interface Question {
   topicCode: string | null;
   topic: string;
   subtopic: string;
+  /** Syllabus subtopic code (e.g. "2.3") when the subtopic is a syllabus one. */
+  subtopicCode: string | null;
+  /** The AI's finer wording when it differs from the syllabus subtopic (searchable). */
+  subtopicDetail: string | null;
   difficulty: Difficulty;
   keywords: string[];
   page: number;

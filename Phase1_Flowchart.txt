@@ -1,0 +1,571 @@
+=====================================================================
+             PAPER ANALYZER - PHASE 1 FLOWCHART (~80 USERS)
+             Built to extend to 5,000 - 10,000 users later
+             Prepared by: Nirav Mehta | Date: 03-Oct-2026
+=====================================================================
+
+LEGEND
+  [  ]   = step / component
+  < ? >  = decision
+  -->    = flow
+  (S)    = SCALE NOTE: what changes later for thousands of users
+           (code stays same, only infrastructure changes)
+
+CONTENTS
+  1. Phase 1 System Architecture
+  2. Login & Role Flow
+  3. Paper Upload Flow (Teacher / Admin)
+  4. AI Processing Pipeline (Background Worker)
+  5. Teacher Review Flow
+  6. Admin Approval & Publish Flow
+  7. Edit After Publish (Revision Flow)
+  8. Student Flow (Browse -> Question -> Reveal Answer -> Source)
+  9. Download Flow
+ 10. Issue Report Flow
+ 11. Scale Path: Phase 1 -> Thousands of Users
+ 12. Rules That Keep Phase 1 Scalable
+
+
+=====================================================================
+1. PHASE 1 SYSTEM ARCHITECTURE
+=====================================================================
+
+            +-----------+   +-----------+   +-----------+
+            |  Student  |   |  Teacher  |   |   Admin   |
+            +-----+-----+   +-----+-----+   +-----+-----+
+                  |               |               |
+                  +-------+-------+-------+-------+
+                          |  HTTPS
+                          v
+   +=========================================================+
+   |        ONE SERVER (2 vCPU, 4-8 GB RAM) - Docker         |
+   |                                                         |
+   |   [Nginx] SSL + reverse proxy                           |
+   |      |                                                  |
+   |      +--> [Next.js Frontend]  (student + admin UI)      |
+   |      |                                                  |
+   |      +--> [NestJS API]  (auth, roles, papers,           |
+   |               |          questions, review, download)   |
+   |               |                                         |
+   |               +--> [PostgreSQL]  all structured data    |
+   |               |                                         |
+   |               +--> [Redis] --> [BullMQ queue]           |
+   |                                     |                   |
+   |                                     v                   |
+   |                              [Worker]                   |
+   |                    (PDF processing, AI calls,           |
+   |                     worksheet PDF generation)           |
+   +=========================================================+
+                |                              |
+                v                              v
+   +-------------------------+     +------------------------+
+   |  Object Storage         |     |  LLM API (vision)      |
+   |  S3 (UAE) / R2          |     |  used ONLY at upload   |
+   |  PDFs, cropped images,  |     |  time, never on        |
+   |  generated worksheets   |     |  student views         |
+   +-------------------------+     +------------------------+
+
+   (S) Later: CDN in front of storage, load balancer + multiple
+       NestJS instances, worker on own server(s), managed
+       PostgreSQL + Redis, read replica, pgvector embeddings.
+
+
+=====================================================================
+2. LOGIN & ROLE FLOW
+=====================================================================
+
+   [User opens app]
+          |
+          v
+   < Has account? > --No--> < Role? >
+          |                    |
+         Yes                   +-- Student --> [Self signup / school invite]
+          |                    |                        |
+          |                    +-- Teacher/Admin --> [Invite only by
+          |                                           Super Admin]
+          |                                             |
+          v                                             v
+   [Login: email + password]  <-------------------------+
+          |
+          v
+   [NestJS verifies] --> [Issue JWT access token + refresh token]
+          |
+          v
+   < Role in token? >
+          |
+          +-- SUPER ADMIN --> [Admin panel + settings: curriculum,
+          |                    levels, subjects, topic tree, users]
+          +-- ADMIN -------> [Admin panel: upload, review queue,
+          |                    approve/publish, archive]
+          +-- TEACHER -----> [Teacher panel: upload, review &
+          |                    correct, submit for approval]
+          +-- STUDENT -----> [Student app: browse, reveal answer,
+                               bookmark, download, report issue]
+
+   Every API request:
+   [Request + JWT] --> [Auth guard] --> [Role guard] --> < Allowed? >
+                                                           |      |
+                                                          Yes     No
+                                                           |      |
+                                                     [Handle]  [403]
+
+   (S) JWT is stateless -> any number of API servers can verify it.
+       No change needed when scaling.
+
+
+=====================================================================
+3. PAPER UPLOAD FLOW (TEACHER / ADMIN)
+=====================================================================
+
+   [Teacher/Admin: "Add Paper"]
+          |
+          v
+   [Fill metadata]
+     Curriculum, Level, Subject + Code, Year, Season,
+     Paper No., Variant
+          |
+          v
+   [Attach files]
+     Question Paper PDF (required)
+     Mark Scheme PDF (required)
+          |
+          v
+   < Duplicate? (subject + year + season + paper + variant) >
+          |                     |
+         Yes                    No
+          |                     |
+          v                     v
+   [Show warning:         [Upload PDFs to S3/R2]
+    "Paper exists"]             |
+                                v
+                         [Create paper row in DB
+                          status = UPLOADED]
+                                |
+                                v
+                         [Add job to BullMQ:
+                          "process-paper" {paper_id}]
+                                |
+                                v
+                         [Return immediately to user:
+                          "Processing started"]
+                                |
+                                v
+                         [UI shows live progress
+                          (polls job status)]
+
+   (S) Uploads go straight to storage, not server disk -> works
+       the same with many servers. Later: direct browser -> S3
+       upload with pre-signed URL to reduce API load.
+
+
+=====================================================================
+4. AI PROCESSING PIPELINE (BACKGROUND WORKER)
+=====================================================================
+
+   [Worker picks "process-paper" job]
+          |
+          v
+   [Status = PROCESSING, progress 0%]
+          |
+          v
+   [Download PDFs from S3/R2]
+          |
+          v
+   [PDF library (no AI)]
+     - render every page as high-res image
+     - extract text layer (if digital PDF)
+     - extract embedded images
+          |
+          v
+   +-----------------------------------------------------------+
+   |  FOR EACH PAGE (or group of pages) of QUESTION PAPER      |
+   |                                                           |
+   |  [Send to Vision LLM]                                     |
+   |    input : page image + extracted text +                  |
+   |            fixed topic list for this subject              |
+   |    output: JSON per question                              |
+   |      - question number (14, 14a, 14b...)                  |
+   |      - type (MCQ / THEORY / STRUCTURED)                   |
+   |      - marks                                              |
+   |      - text with LaTeX equations                          |
+   |      - MCQ options A/B/C/D (if MCQ)                       |
+   |      - diagram box coordinates                            |
+   |      - topic, subtopic, difficulty                        |
+   |      - confidence scores                                  |
+   |          |                                                |
+   |          v                                                |
+   |  < Valid JSON & topic in allowed list? >                  |
+   |          |                 |                              |
+   |         Yes                No --> [Retry once] --> still  |
+   |          |                         fails? mark question   |
+   |          |                         "NEEDS_MANUAL"         |
+   |          v                                                |
+   |  [Crop diagram from page image using box]                 |
+   |  [Convert to WebP] --> [Save to S3/R2]                    |
+   |          |                                                |
+   |          v                                                |
+   |  [Update progress %]                                      |
+   +-----------------------------------------------------------+
+          |
+          v
+   +-----------------------------------------------------------+
+   |  MARK SCHEME                                              |
+   |  [Render pages] --> [Vision LLM] --> answers per question |
+   |    MCQ    : question no. -> correct letter                |
+   |    Theory : question no. -> mark scheme text (LaTeX)      |
+   |          |                                                |
+   |          v                                                |
+   |  [Match answers to questions by number]                   |
+   |  < All matched? > --No--> [Flag unmatched for review]     |
+   +-----------------------------------------------------------+
+          |
+          v
+   [Save in one DB transaction]
+     questions, mcq_options, answers, question_assets,
+     question_topics  (all status = IN_REVIEW)
+          |
+          v
+   [Paper status = IN_REVIEW, progress 100%]
+          |
+          v
+   [Notify uploader: "Ready for review"]
+
+   ON FAILURE (any step):
+   [BullMQ auto-retry with backoff (e.g. 3 tries)]
+          |
+          v
+   < Still failing? > --Yes--> [Paper status = FAILED + error saved]
+                               [Admin can "Re-process"]
+
+   NOT IN PHASE 1 (placeholder):
+   [Generate embeddings --> pgvector]   <-- added in Phase 2/3
+
+   (S) Later: run multiple workers in parallel (more servers or
+       containers). Same queue, same code. Add embeddings step
+       as a new job type "embed-questions" - no change to
+       existing steps.
+
+
+=====================================================================
+5. TEACHER REVIEW FLOW
+=====================================================================
+
+   [Teacher opens paper (IN_REVIEW)]
+          |
+          v
+   [Review screen - side by side]
+     LEFT : original PDF page image
+     RIGHT: extracted question (editable)
+          |
+          v
+   +-----------------------------------------------------------+
+   |  FOR EACH QUESTION                                        |
+   |                                                           |
+   |  [Check]                                                  |
+   |    - question text + LaTeX preview (KaTeX)                |
+   |    - diagram crop (crop editor to adjust box)             |
+   |    - type, marks, MCQ options                             |
+   |    - topic / subtopic (dropdown from fixed list)          |
+   |    - answer / mark scheme                                 |
+   |          |                                                |
+   |          v                                                |
+   |  < Correct? > --No--> [Edit & save]                       |
+   |          |                   |                            |
+   |         Yes <----------------+                            |
+   |          |                                                |
+   |          v                                                |
+   |  [Mark question VERIFIED]                                 |
+   +-----------------------------------------------------------+
+          |
+          v
+   < All questions VERIFIED? > --No--> [Continue reviewing]
+          |
+         Yes
+          v
+   [Submit paper for approval]
+          |
+          v
+   [Paper status = SUBMITTED]  --> appears in Admin queue
+   [Audit log: who verified, what was edited]
+
+
+=====================================================================
+6. ADMIN APPROVAL & PUBLISH FLOW
+=====================================================================
+
+   [Admin opens Approval Queue]
+          |
+          v
+   [Select SUBMITTED paper]
+          |
+          v
+   [Review questions (same side-by-side screen)]
+          |
+          v
+   < Decision per question / whole paper >
+          |
+          +-- APPROVE ALL ----------------------------+
+          |                                           |
+          +-- APPROVE SOME + REJECT SOME              |
+          |      |                                    |
+          |      v                                    |
+          |   [Rejected questions -> back to teacher  |
+          |    with comment, status = REJECTED]       |
+          |   [Approved questions continue] ----------+
+          |                                           |
+          +-- REJECT PAPER                            |
+                 |                                    |
+                 v                                    v
+          [Paper status = REJECTED         [Status = APPROVED]
+           + comment -> teacher fixes            |
+           -> SUBMITTED again]                   v
+                                          [Admin clicks PUBLISH]
+                                                 |
+                                                 v
+                                          [Status = PUBLISHED]
+                                          [Now visible to students]
+                                          [Clear related cache]
+                                          [Audit log entry]
+
+   Later admin actions:
+   [PUBLISHED] --> [ARCHIVE] --> hidden from students, never deleted
+
+   (S) "Clear related cache" is a no-op in Phase 1 (no cache yet)
+       but keep the hook in code -> Redis cache plugs in later.
+
+
+=====================================================================
+7. EDIT AFTER PUBLISH (REVISION FLOW)
+=====================================================================
+
+   [Teacher/Admin edits a PUBLISHED question]
+          |
+          v
+   [Create row in question_revisions (status = SUBMITTED)]
+   [Live question stays unchanged for students]
+          |
+          v
+   [Admin reviews revision]
+          |
+     < Approve? >
+       |       |
+      Yes      No --> [Revision REJECTED + comment]
+       |
+       v
+   [Apply revision to live question]
+   [Clear cache] [Audit log]
+
+
+=====================================================================
+8. STUDENT FLOW
+=====================================================================
+
+   [Student logs in]
+          |
+          v
+   [Home: choose Curriculum -> Level -> Subject]
+          |
+          v
+   [Filters (progressive, mobile friendly)]
+     Paper | Year | Season | Topic | Subtopic |
+     Type (MCQ / Theory) | Difficulty
+          |
+          v
+   [API: GET /questions?filters&cursor]
+     - only status = PUBLISHED   (enforced in backend)
+     - 20 per page (cursor pagination)
+     - answer NOT included
+          |
+          v
+   [Question list - infinite scroll]
+          |
+          v
+   [Open Question Card]
+   +-----------------------------------------------------------+
+   |  Physics - AS Level | Mechanics > Momentum | 5 marks      |
+   |                                                           |
+   |  Question 14                                              |
+   |  Text with LaTeX (KaTeX)                                  |
+   |  [Cropped diagram image]                                  |
+   |  MCQ options A / B / C / D (if MCQ)                       |
+   |                                                           |
+   |  [Reveal Answer]  [Bookmark]  [Report Issue]              |
+   |                                                           |
+   |  Source: Physics 9702 | May/June 2025 | Paper 2 |         |
+   |          Q14 | Page 7      [View Source]                  |
+   +-----------------------------------------------------------+
+          |
+          +--> [Reveal Answer]
+          |        |
+          |        v
+          |    [API: GET /questions/:id/answer]
+          |        |
+          |        v
+          |    < Type? >
+          |      +-- MCQ    --> [Show correct option, highlight]
+          |      +-- Theory --> [Show official answer +
+          |                      [Show Mark Scheme]]
+          |
+          +--> [View Source]
+          |        |
+          |        v
+          |    [Show paper info: curriculum, level, subject,
+          |     code, year, season, paper no., question no.,
+          |     page no.]
+          |    [View original page] (if client allows)
+          |
+          +--> [Bookmark] --> [Saved to My Bookmarks]
+          |
+          +--> [Similar Questions]  (Phase 1: same topic +
+                                     subtopic + type, simple
+                                     DB query, NO AI)
+
+   (S) Later: Redis cache for topic tree + popular filters,
+       CDN for images, read replica for these GET queries,
+       "Similar Questions" upgraded to pgvector embeddings.
+       Same API endpoints - frontend does not change.
+
+
+=====================================================================
+9. DOWNLOAD FLOW
+=====================================================================
+   Decision so far: FREE for all students, NO watermark,
+   logged-in only, every download logged.
+   (Pending client confirmation on options below.)
+
+   A) CUSTOM WORKSHEET PDF
+
+   [Student selects questions] --> [Download PDF]
+          |
+          v
+   < Include answers? >  (if client allows choice)
+          |
+          v
+   [API: create job "generate-worksheet"
+    {user_id, question_ids, with_answers}]
+          |
+          v
+   < Same worksheet already generated? >
+          |                   |
+         Yes                  No
+          |                   |
+          |                   v
+          |            [Worker builds PDF]
+          |              questions + LaTeX + diagrams +
+          |              source info (+ answers if chosen)
+          |                   |
+          |                   v
+          |            [Save PDF to S3/R2]
+          |                   |
+          +---------+---------+
+                    |
+                    v
+   [Create short-lived signed download link (~5 min)]
+                    |
+                    v
+   [Student downloads]  [Log in downloads table]
+
+   B) ORIGINAL PAPER / MARK SCHEME  (only if client has rights)
+
+   [Student: Download original] --> [Check login]
+          |
+          v
+   [Signed link to original PDF in S3/R2] --> [Log download]
+
+   (S) Later: more workers for PDF generation in exam season,
+       CDN for delivery. Same flow.
+
+
+=====================================================================
+10. ISSUE REPORT FLOW
+=====================================================================
+
+   [Student: Report Issue on a question]
+          |
+          v
+   [Choose reason: wrong answer / wrong text / bad image /
+    wrong topic / other] + message
+          |
+          v
+   [Saved in issue_reports (status = OPEN)]
+          |
+          v
+   [Admin/Teacher sees issues list]
+          |
+          v
+   [Fix via Revision Flow (Section 7)] --> [Issue = RESOLVED]
+
+
+=====================================================================
+11. SCALE PATH: PHASE 1 -> THOUSANDS OF USERS
+=====================================================================
+
+   PHASE 1 (~80 users)            PHASE 2 (~500-2,000)
+   -------------------            --------------------
+   1 server, all in Docker   -->  + CDN for images
+   PostgreSQL in Docker      -->  Managed PostgreSQL (backups)
+   Redis in Docker           -->  Managed Redis
+   Worker on same server     -->  Worker on its own server
+   No cache                  -->  Redis cache (topic tree, filters)
+   Similar = topic match     -->  (optional) pgvector embeddings
+   Basic logs                -->  Monitoring + error tracking
+
+                                  PHASE 3 (5,000-10,000+)
+                                  -----------------------
+                             -->  Load balancer + 2..N API servers
+                             -->  Multiple workers (parallel jobs)
+                             -->  PostgreSQL read replica
+                             -->  PgBouncer connection pooling
+                             -->  Autoscaling for exam season
+                             -->  (optional) RAG / AI explanation
+                             -->  Analytics dashboards
+
+   Phase 3 picture:
+
+                      [CDN]
+                        |
+                 [Load Balancer]
+                  /     |      \
+            [API 1] [API 2] [API N]
+                  \     |      /
+        +-----------+---+--------+-----------+
+        |           |            |           |
+   [PostgreSQL] [Read       [Redis]      [S3 / R2]
+    primary +    replica]   cache +
+    pgvector                BullMQ
+                               |
+                     [Worker 1..N] --> [LLM API]
+                                   --> [Embeddings API]
+
+
+=====================================================================
+12. RULES THAT KEEP PHASE 1 SCALABLE
+=====================================================================
+   (Follow these now -> scaling later = add servers, not rewrite)
+
+   1. STATELESS API      : JWT auth, no data stored in server
+                           memory or local disk.
+   2. FILES IN STORAGE   : every PDF / image / worksheet in S3/R2,
+                           DB stores only the file key/path.
+   3. QUEUE FOR HEAVY WORK: PDF processing + PDF generation always
+                           via BullMQ, never inside an HTTP request.
+   4. ONE CODEBASE, MODULES: NestJS modular monolith; worker uses
+                           the same code, started in worker mode.
+   5. CONFIG IN .ENV     : DB URL, Redis URL, storage bucket, LLM
+                           key, CDN domain -> change infra by
+                           changing env only.
+   6. MIGRATIONS         : every DB change through migrations.
+   7. INDEXES FROM DAY 1 : papers(subject, year, season, paper_no),
+                           questions(paper_id, status),
+                           question_topics(topic_id).
+   8. PAGINATION ALWAYS  : never return all rows.
+   9. CACHE HOOKS        : "clear cache on publish" exists in code
+                           from day 1 (empty now, Redis later).
+  10. DOCKER EVERYTHING  : same containers run on 1 server or many.
+  11. BACKUPS            : daily DB backup to storage from day 1.
+  12. PROVENANCE ALWAYS  : every question linked to paper, page,
+                           source PDF.
+
+=====================================================================
+                               END
+=====================================================================

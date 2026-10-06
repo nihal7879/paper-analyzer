@@ -1,20 +1,17 @@
 import { useQuery } from "@tanstack/react-query";
-import { ArrowUp, Check, CheckCheck, ChevronDown, Library, ListFilter, PanelLeftClose, PanelLeftOpen, Search, SearchX, X } from "lucide-react";
-import { memo, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
-import { Link, useSearchParams } from "react-router";
-import { Collapse } from "@/components/collapse";
+import { ArrowUp, CheckCheck, Library, SearchX } from "lucide-react";
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import { Link, useLocation, useNavigationType, useSearchParams } from "react-router";
+import { ActiveChips, FilterRail, SearchBox } from "@/components/bank-filters";
+import { warmMath } from "@/components/math-text";
 import { SelectionBar } from "@/components/pdf-download";
 import { QuestionCard, type SimilarItem } from "@/components/question-card";
-import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Sheet, SheetContent, SheetFooter, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAdmin } from "@/lib/admin";
 import { api } from "@/lib/api";
-import { difficultyLabel, difficultyStyle } from "@/lib/format";
 import { selection, useSelection } from "@/lib/selection";
 import {
   activeFilterCount,
@@ -23,17 +20,35 @@ import {
   filterEntries,
   filtersFromParams,
   filtersToParams,
+  rememberCourse,
   sortEntries,
   useQuestionBank,
-  type FacetOption,
   type Filters,
-  type MultiKey,
   type SortKey,
 } from "@/lib/question-bank";
 import { cn } from "@/lib/utils";
 
 const PAGE_SIZE = 20;
-const SIDEBAR_KEY = "pa.sidebarOpen";
+const FIRST_PAINT = 6;
+const SHOWN_KEY = "pa.shown";
+const ANCHOR_KEY = "pa.anchor";
+const HEADER_PX = 72;
+
+/** The card at the top of the screen (and how far down it sits), remembered when leaving the page. */
+function saveAnchor() {
+  const cards = document.querySelectorAll<HTMLElement>("[data-card-key]");
+  for (const el of cards) {
+    const r = el.getBoundingClientRect();
+    if (r.bottom > HEADER_PX + 8) {
+      try {
+        sessionStorage.setItem(ANCHOR_KEY, JSON.stringify({ key: el.dataset.cardKey, top: r.top }));
+      } catch {
+        // private mode
+      }
+      return;
+    }
+  }
+}
 
 const SORT_ITEMS: { value: SortKey; label: string }[] = [
   { value: "newest", label: "Newest papers first" },
@@ -41,22 +56,24 @@ const SORT_ITEMS: { value: SortKey; label: string }[] = [
   { value: "topic", label: "By topic" },
 ];
 
-type Facets = ReturnType<typeof buildFacets>;
-
-function readSidebarPref(): boolean {
-  try {
-    return localStorage.getItem(SIDEBAR_KEY) !== "0";
-  } catch {
-    return true;
-  }
-}
-
 export function BrowsePage() {
   const { isAdmin } = useAdmin();
   const [params, setParams] = useSearchParams();
-  const [shown, setShown] = useState(PAGE_SIZE);
-  const [drawerOpen, setDrawerOpen] = useState(false);
-  const [sidebarOpen, setSidebarOpen] = useState(readSidebarPref);
+  // How many cards are loaded survives a trip to another page and back (so Back lands on the same card).
+  const [shown, setShown] = useState(() => {
+    try {
+      return Math.max(PAGE_SIZE, Number(sessionStorage.getItem(SHOWN_KEY)) || 0);
+    } catch {
+      return PAGE_SIZE;
+    }
+  });
+  useEffect(() => {
+    try {
+      sessionStorage.setItem(SHOWN_KEY, String(shown));
+    } catch {
+      // private mode
+    }
+  }, [shown]);
 
   // Filters live in state (instant); the URL is updated a moment later so a click never waits for the router.
   const [filters, setFilters] = useState<Filters>(() => filtersFromParams(params));
@@ -78,7 +95,22 @@ export function BrowsePage() {
   const adminPapers = useQuery({ queryKey: ["papers"], queryFn: api.papers, enabled: isAdmin });
   const unpublishedCount = (adminPapers.data ?? []).filter((p) => p.meta.paperState !== "PUBLISHED").length;
 
+  // A remembered / linked course that has no published questions is ignored.
+  const knownCourse = !filters.course || pool.length === 0 || pool.some((e) => e.meta.subjectCode === filters.course);
+  useEffect(() => {
+    if (!knownCourse) setFilters((f) => ({ ...f, course: null }));
+  }, [knownCourse]);
   const facets = useMemo(() => buildFacets(pool, filters), [pool, filters]);
+  // Typeset every question's maths in idle time once the bank loads, so searching / filtering only reuses it.
+  useEffect(() => {
+    if (pool.length === 0) return;
+    const texts: string[] = [];
+    for (const e of sortEntries(pool, "newest")) {
+      texts.push(e.question.text, ...e.question.options.map((o) => o.text));
+      if (e.question.answer?.text) texts.push(e.question.answer.text);
+    }
+    return warmMath(texts);
+  }, [pool]);
   const results = useMemo(() => sortEntries(filterEntries(pool, deferredFilters), deferredSort), [pool, deferredFilters, deferredSort]);
   // Question id -> entry, to turn each question's similarIds into cards (published questions only).
   const byId = useMemo(() => new Map(pool.map((e) => [e.question.id, e])), [pool]);
@@ -89,11 +121,75 @@ export function BrowsePage() {
       m.set(e.question.id, e.question.similarIds.flatMap((id) => byId.get(id) ?? []).slice(0, 5).map((s) => ({ key: s.key, meta: s.meta, question: s.question })));
     return m;
   }, [pool, byId]);
-  const [openSimilar, setOpenSimilar] = useState<SimilarItem | null>(null);
-  const visible = results.slice(0, shown);
+  // New results: draw what fits on screen first, the rest of the page one frame later (feels instant).
+  // (The first list after the page appears is drawn in full, so Back can restore the scroll position.)
+  const [renderLimit, setRenderLimit] = useState(Infinity);
+  const firstList = useRef(true);
+
+  // Back from another page (e.g. Similar questions): put the same card back at the same spot.
+  // (Cards far off screen are drawn lazily with an estimated height, so a pixel scroll position isn't reliable.)
+  const navType = useNavigationType();
+  // Remember the top card while scrolling (once per frame at most); leaving the page then needs nothing extra.
+  useEffect(() => {
+    let frame = 0;
+    const onScroll = () => {
+      if (frame) return;
+      frame = requestAnimationFrame(() => {
+        frame = 0;
+        saveAnchor();
+      });
+    };
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => {
+      window.removeEventListener("scroll", onScroll);
+      cancelAnimationFrame(frame);
+    };
+  }, []);
+  const location = useLocation();
+  const restoredFor = useRef<string | null>(null);
+  useEffect(() => {
+    if (!results.length || navType !== "POP" || restoredFor.current === location.key) return;
+    let anchor: { key: string; top: number } | null = null;
+    try {
+      anchor = JSON.parse(sessionStorage.getItem(ANCHOR_KEY) ?? "null");
+    } catch {
+      anchor = null;
+    }
+    if (!anchor) return;
+    const place = () => {
+      const el = document.querySelector<HTMLElement>(`[data-card-key="${CSS.escape(anchor!.key)}"]`);
+      if (el) window.scrollTo({ top: window.scrollY + el.getBoundingClientRect().top - anchor!.top, behavior: "instant" });
+    };
+    // now, and again once the page has settled (lazy cards / images above change heights).
+    // If the list re-renders meanwhile, this simply runs again; it is marked done after the last step.
+    const timers = [0, 120, 300, 700].map((ms, i, all) =>
+      window.setTimeout(() => {
+        place();
+        if (i === all.length - 1) restoredFor.current = location.key;
+      }, ms),
+    );
+    return () => timers.forEach(clearTimeout);
+  }, [results, navType, location.key]);
+  useEffect(() => {
+    if (firstList.current) {
+      if (results.length) firstList.current = false;
+      return;
+    }
+    setRenderLimit(FIRST_PAINT);
+    let timer = 0;
+    const frame = requestAnimationFrame(() => {
+      timer = window.setTimeout(() => setRenderLimit(Infinity), 0);
+    });
+    return () => {
+      cancelAnimationFrame(frame);
+      clearTimeout(timer);
+    };
+  }, [results]);
+  const visible = results.slice(0, Math.min(shown, renderLimit));
+  const pageCount = Math.min(shown, results.length);
   const paperCount = useMemo(() => new Set(results.map((r) => r.meta.id)).size, [results]);
   const totalMarks = useMemo(() => results.reduce((s, r) => s + (r.question.marks ?? 0), 0), [results]);
-  const active = activeFilterCount(filters) + (filters.board ? 1 : 0) + (filters.curriculum ? 1 : 0) + (filters.subject ? 1 : 0);
+  const active = activeFilterCount(filters);
   const selectedSet = useMemo(() => new Set(selected), [selected]);
   const allResultsSelected = results.length > 0 && results.every((r) => selectedSet.has(r.question.id));
 
@@ -102,45 +198,44 @@ export function BrowsePage() {
     if (nextSort) setSort(nextSort);
     setShown(PAGE_SIZE);
   }, []);
-  const clearAll = useCallback(() => update({ ...EMPTY_FILTERS }), [update]);
+  // "Clear all" clears every side-panel filter (board, level, subject too); the search box stays.
+  const clearAll = useCallback(() => {
+    rememberCourse(null);
+    setFilters((f) => ({ ...EMPTY_FILTERS, q: f.q }));
+    setShown(PAGE_SIZE);
+  }, []);
+  const setCourse = useCallback(
+    (course: string | null) => {
+      rememberCourse(course);
+      // Picking a subject also sets its board and level (so all three filters agree);
+      // topics and paper numbers belong to a course, so they reset with it.
+      const e = course ? pool.find((x) => x.meta.subjectCode === course) : undefined;
+      update(e ? { course, board: e.meta.board, level: e.meta.curriculum, topic: [], sub: [], paper: [] } : { course: null, topic: [], sub: [], paper: [] });
+    },
+    [update, pool],
+  );
+  const setQuery = useCallback((q: string) => update({ q }), [update]);
 
-  function toggleSidebar() {
-    const next = !sidebarOpen;
-    setSidebarOpen(next);
-    try {
-      localStorage.setItem(SIDEBAR_KEY, next ? "1" : "0");
-    } catch {
-      // ignore
-    }
-  }
-
-  const panelProps = { filters, facets, update, active, onClear: clearAll };
 
   return (
     <div className="grid grid-cols-[minmax(0,1fr)] gap-4">
       {/* Title + description live in the navbar; kept here for screen readers */}
       <h1 className="sr-only">Practice questions</h1>
 
-      <div className={cn("grid items-start gap-6", sidebarOpen && "lg:grid-cols-[272px_minmax(0,1fr)]")}>
-        {/* Sidebar (desktop) */}
-        {sidebarOpen && (
-          <aside className="enter-up sticky top-20 hidden max-h-[calc(100vh-6rem)] overflow-y-auto rounded-xl border bg-card lg:block" aria-label="Filters">
-            <FilterPanel {...panelProps} />
-          </aside>
-        )}
+      <div className="grid items-start gap-4 lg:grid-cols-[84px_minmax(0,1fr)] lg:gap-6">
+        {/* Filters: icon rail (laptop: column on the left; phone / tablet: a row of icon tabs) */}
+        <div className="z-20 lg:sticky lg:top-20">
+          <FilterRail filters={filters} facets={facets} update={update} active={active} onClear={clearAll} onCourse={setCourse} />
+        </div>
 
         {/* Results */}
         <section className={cn("grid min-w-0 gap-4", selected.length > 0 && "pb-20")}>
+          {/* Search: top of the questions column, right of the filter rail */}
+          <SearchBox value={filters.q} onChange={setQuery} />
+
+
           {/* Toolbar */}
           <div className="flex flex-wrap items-center gap-2">
-            <Button variant="outline" className="mr-auto h-10 gap-2 sm:mr-0 sm:h-9 lg:hidden" onClick={() => setDrawerOpen(true)}>
-              <ListFilter className="size-4" /> Filters
-              {active > 0 && <Badge className="h-5 min-w-5 px-1.5">{active}</Badge>}
-            </Button>
-            <Button variant="ghost" className="hidden h-9 gap-2 text-muted-foreground lg:inline-flex" onClick={toggleSidebar}>
-              {sidebarOpen ? <PanelLeftClose className="size-4" /> : <PanelLeftOpen className="size-4" />}
-              {sidebarOpen ? "Hide filters" : `Show filters${active ? ` (${active})` : ""}`}
-            </Button>
             <p className="order-last basis-full text-sm text-muted-foreground sm:order-none sm:mr-auto sm:basis-auto">
               {!bank.isLoading && (
                 <>
@@ -181,7 +276,7 @@ export function BrowsePage() {
             </Select>
           </div>
 
-          {active > 0 && <ActiveChips filters={filters} facets={facets} update={update} onClear={clearAll} />}
+          <ActiveChips filters={filters} facets={facets} update={update} onClear={clearAll} onCourse={setCourse} />
 
           {bank.isLoading ? (
             <div className="grid gap-4">
@@ -196,33 +291,49 @@ export function BrowsePage() {
           ) : results.length === 0 ? (
             <Card className="items-center gap-3 px-6 py-14 text-center">
               <SearchX className="size-8 text-muted-foreground" />
-              <p className="font-medium">No questions match these filters</p>
-              <p className="text-sm text-muted-foreground">Try removing a filter.</p>
-              <Button variant="outline" onClick={clearAll}>
-                Clear all filters
-              </Button>
+              <p className="font-medium">{filters.q.trim() ? `No questions match “${filters.q.trim()}”` : "No questions match these filters"}</p>
+              <p className="text-sm text-muted-foreground">
+                {filters.q.trim() ? "Check the spelling, try fewer words, or remove a filter." : "Try removing a filter."}
+              </p>
+              <div className="flex flex-wrap justify-center gap-2">
+                {filters.q.trim() && (
+                  <Button variant="outline" onClick={() => setQuery("")}>
+                    Clear search
+                  </Button>
+                )}
+                {active > 0 && (
+                  <Button variant="outline" onClick={clearAll}>
+                    Clear filters
+                  </Button>
+                )}
+                {filters.course && (
+                  <Button variant="ghost" onClick={() => setCourse(null)}>
+                    Search all courses
+                  </Button>
+                )}
+              </div>
             </Card>
           ) : (
             <>
               <div className={cn("grid gap-4 transition-opacity duration-200", updating && "opacity-60")}>
                 {visible.map((e) => (
-                  <div key={e.key} className="card-auto">
-                    <QuestionCard question={e.question} meta={e.meta} similar={similarById.get(e.question.id)} onOpenSimilar={setOpenSimilar} selectable />
+                  <div key={e.key} className="card-auto" data-card-key={e.key}>
+                    <QuestionCard question={e.question} meta={e.meta} similar={similarById.get(e.question.id)} selectable />
                   </div>
                 ))}
               </div>
-              <LoadMoreSentinel enabled={visible.length < results.length} onVisible={() => setShown((n) => n + PAGE_SIZE)} />
+              <LoadMoreSentinel enabled={pageCount < results.length && renderLimit === Infinity} onVisible={() => setShown((n) => n + PAGE_SIZE)} />
               <div className="flex flex-col items-center gap-3 py-4">
                 <p className="text-sm text-muted-foreground">
-                  Showing {visible.length} of {results.length}
+                  Showing {pageCount} of {results.length}
                 </p>
                 <div className="flex gap-2">
-                  {visible.length < results.length && (
+                  {pageCount < results.length && (
                     <Button size="lg" variant="outline" onClick={() => setShown((n) => n + PAGE_SIZE)}>
-                      Load {Math.min(PAGE_SIZE, results.length - visible.length)} more
+                      Load {Math.min(PAGE_SIZE, results.length - pageCount)} more
                     </Button>
                   )}
-                  {visible.length > 5 && (
+                  {pageCount > 5 && (
                     <Button size="lg" variant="ghost" className="gap-1.5" onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}>
                       <ArrowUp className="size-4" /> Back to top
                     </Button>
@@ -234,316 +345,15 @@ export function BrowsePage() {
         </section>
       </div>
 
-      {/* A similar question opens right here (with its own similar list, so students can keep going) */}
-      <Dialog open={!!openSimilar} onOpenChange={(o) => !o && setOpenSimilar(null)}>
-        <DialogContent className="max-h-[92dvh] w-[calc(100vw-1rem)] max-w-none gap-0 overflow-y-auto p-0 sm:w-full sm:max-w-3xl lg:max-h-[90vh]">
-          <DialogTitle className="sr-only">Similar question</DialogTitle>
-          {openSimilar && (
-            <QuestionCard
-              key={openSimilar.key}
-              className="rounded-none border-0 ring-0 [&>div:first-child]:pr-12"
-              question={openSimilar.question}
-              meta={openSimilar.meta}
-              similar={similarById.get(openSimilar.question.id)}
-              onOpenSimilar={setOpenSimilar}
-              selectable
-            />
-          )}
-        </DialogContent>
-      </Dialog>
+
 
       <SelectionBar ids={selected} byId={byId} />
 
-      {/* Drawer (mobile / tablet) */}
-      <Sheet open={drawerOpen} onOpenChange={setDrawerOpen}>
-        <SheetContent side="left" className="w-[90vw] max-w-sm gap-0 p-0 pb-[env(safe-area-inset-bottom)]">
-          <SheetHeader className="border-b">
-            <SheetTitle className="flex items-center gap-2">
-              <ListFilter className="size-4" /> Filters
-              {active > 0 && (
-                <button type="button" onClick={clearAll} className="mr-8 ml-auto text-xs font-medium text-primary hover:underline">
-                  Clear all
-                </button>
-              )}
-            </SheetTitle>
-          </SheetHeader>
-          <div className="flex-1 overflow-y-auto">
-            <FilterPanel {...panelProps} hideHeader />
-          </div>
-          <SheetFooter className="border-t">
-            <Button size="lg" onClick={() => setDrawerOpen(false)}>
-              Show {results.length} question{results.length === 1 ? "" : "s"}
-            </Button>
-          </SheetFooter>
-        </SheetContent>
-      </Sheet>
     </div>
   );
 }
 
-// ---------------------------------------------------------------- sidebar
-
-const FilterPanel = memo(function FilterPanel({
-  filters,
-  facets,
-  update,
-  active,
-  onClear,
-  hideHeader = false,
-}: {
-  filters: Filters;
-  facets: Facets;
-  update: (next: Partial<Filters>) => void;
-  active: number;
-  onClear: () => void;
-  hideHeader?: boolean;
-}) {
-  const multi = (key: MultiKey) => ({
-    value: filters[key],
-    onToggle: (v: string) => update({ [key]: filters[key].includes(v) ? filters[key].filter((x) => x !== v) : [...filters[key], v] } as Partial<Filters>),
-    onClear: () => update({ [key]: [] } as Partial<Filters>),
-  });
-
-  return (
-    <div className="grid grid-cols-[minmax(0,1fr)]">
-      <div className={cn("flex items-center justify-between px-4 pt-4 pb-2", hideHeader && "hidden")}>
-        <span className="flex items-center gap-2 text-sm font-semibold">
-          <ListFilter className="size-4" /> Filters
-        </span>
-        {active > 0 && (
-          <button type="button" onClick={onClear} className="text-xs font-medium text-primary underline-offset-4 hover:underline">
-            Clear all
-          </button>
-        )}
-      </div>
-
-      <FilterSection title="Board" selected={filters.board ? 1 : 0}>
-        <RadioList options={facets.boards} value={filters.board} allLabel="All boards" onChange={(v) => update({ board: v, curriculum: null, subject: null, topic: [] })} />
-      </FilterSection>
-      <FilterSection title="Level" selected={filters.curriculum ? 1 : 0}>
-        <RadioList options={facets.curriculums} value={filters.curriculum} allLabel="All levels" onChange={(v) => update({ curriculum: v, subject: null, topic: [] })} />
-      </FilterSection>
-      <FilterSection title="Subject" selected={filters.subject ? 1 : 0}>
-        <RadioList options={facets.subjects} value={filters.subject} allLabel="All subjects" onChange={(v) => update({ subject: v, topic: [] })} />
-      </FilterSection>
-      <FilterSection title="Topic" selected={filters.topic.length}>
-        <CheckList options={facets.topics} {...multi("topic")} searchable />
-      </FilterSection>
-      <FilterSection title="Paper" selected={filters.paper.length}>
-        <CheckList options={facets.papers} {...multi("paper")} />
-      </FilterSection>
-      <FilterSection title="Year" selected={filters.year.length}>
-        <CheckList options={facets.years} {...multi("year")} columns />
-      </FilterSection>
-      <FilterSection title="Season" selected={filters.season.length}>
-        <CheckList options={facets.seasons} {...multi("season")} />
-      </FilterSection>
-      <FilterSection title="Question type" selected={filters.type.length}>
-        <CheckList options={facets.types} {...multi("type")} />
-      </FilterSection>
-      <FilterSection title="Difficulty" selected={filters.difficulty.length} last>
-        <DifficultyPills options={facets.difficulties} {...multi("difficulty")} />
-      </FilterSection>
-    </div>
-  );
-});
-
-function FilterSection({ title, selected, last, children }: { title: string; selected: number; last?: boolean; children: React.ReactNode }) {
-  const [open, setOpen] = useState(true);
-  return (
-    <div className={cn("border-t px-4", last && "pb-2")}>
-      <button type="button" aria-expanded={open} onClick={() => setOpen((o) => !o)} className="flex w-full items-center justify-between gap-2 py-3 text-left">
-        <span className="flex items-center gap-2 text-xs font-semibold tracking-wide text-muted-foreground uppercase">
-          {title}
-          {selected > 0 && <span className="rounded-full bg-primary px-1.5 text-[10px] leading-4 font-semibold text-primary-foreground">{selected}</span>}
-        </span>
-        <ChevronDown className={cn("size-4 text-muted-foreground transition-transform duration-200", !open && "-rotate-90")} />
-      </button>
-      <Collapse open={open}>
-        <div className="pb-3">{children}</div>
-      </Collapse>
-    </div>
-  );
-}
-
-function RadioList({ options, value, allLabel, onChange }: { options: FacetOption[]; value: string | null; allLabel: string; onChange: (v: string | null) => void }) {
-  const total = options.reduce((s, o) => s + o.count, 0);
-  const rows = [{ value: null as string | null, label: allLabel, count: total }, ...options];
-  return (
-    <div role="radiogroup" className="grid grid-cols-[minmax(0,1fr)] gap-0.5">
-      {rows.map((o) => {
-        const on = o.value === value;
-        return (
-          <button
-            key={o.value ?? "all"}
-            type="button"
-            role="radio"
-            aria-checked={on}
-            onClick={() => onChange(o.value)}
-            className={cn("flex items-center gap-2.5 rounded-md px-2 py-2.5 text-left text-[15px] transition-colors hover:bg-muted lg:py-1.5 lg:text-sm", on && "bg-primary/5 font-medium")}
-          >
-            <span className={cn("flex size-4 shrink-0 items-center justify-center rounded-full border", on && "border-primary")}>
-              {on && <span className="size-2 rounded-full bg-primary" />}
-            </span>
-            <span className="min-w-0 flex-1 truncate">{o.label}</span>
-            <span className="text-xs text-muted-foreground tabular-nums">{o.count}</span>
-          </button>
-        );
-      })}
-    </div>
-  );
-}
-
-const COLLAPSED_ROWS = 6;
-
-function CheckList({
-  options,
-  value,
-  onToggle,
-  onClear,
-  searchable,
-  columns,
-}: {
-  options: FacetOption[];
-  value: string[];
-  onToggle: (v: string) => void;
-  onClear: () => void;
-  searchable?: boolean;
-  columns?: boolean;
-}) {
-  const [query, setQuery] = useState("");
-  const [expanded, setExpanded] = useState(false);
-  if (options.length === 0) return <p className="px-2 text-xs text-muted-foreground">Nothing to filter yet</p>;
-
-  const q = query.trim().toLowerCase();
-  const matched = q ? options.filter((o) => o.label.toLowerCase().includes(q)) : options;
-  const limit = expanded || q || columns ? matched.length : COLLAPSED_ROWS;
-  const rows = matched.slice(0, limit);
-
-  return (
-    <div className="grid grid-cols-[minmax(0,1fr)] gap-1.5">
-      {searchable && options.length > COLLAPSED_ROWS && (
-        <div className="flex h-8 items-center gap-2 rounded-md border bg-background px-2 focus-within:ring-2 focus-within:ring-ring/40">
-          <Search className="size-3.5 text-muted-foreground" />
-          <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search…" className="w-full bg-transparent text-base outline-none placeholder:text-muted-foreground sm:text-sm" />
-        </div>
-      )}
-      <div className={cn("grid gap-0.5", columns ? "grid-cols-[repeat(2,minmax(0,1fr))]" : "grid-cols-[minmax(0,1fr)]")}>
-        {rows.map((o) => {
-          const on = value.includes(o.value);
-          return (
-            <button
-              key={o.value}
-              type="button"
-              role="checkbox"
-              aria-checked={on}
-              onClick={() => onToggle(o.value)}
-              className={cn(
-                "flex items-center gap-2.5 rounded-md px-2 py-2.5 text-left text-[15px] transition-colors hover:bg-muted lg:py-1.5 lg:text-sm",
-                o.count === 0 && !on && "opacity-50",
-                on && "font-medium",
-              )}
-            >
-              <span className={cn("flex size-4 shrink-0 items-center justify-center rounded border transition-colors", on && "border-primary bg-primary text-primary-foreground")}>
-                {on && <Check className="size-3" />}
-              </span>
-              <span className="min-w-0 flex-1 truncate" title={o.label}>
-                {o.label}
-              </span>
-              <span className="text-xs text-muted-foreground tabular-nums">{o.count}</span>
-            </button>
-          );
-        })}
-      </div>
-      <div className="flex items-center gap-3 px-2">
-        {!q && !columns && matched.length > COLLAPSED_ROWS && (
-          <button type="button" onClick={() => setExpanded((e) => !e)} className="text-xs font-medium text-primary hover:underline">
-            {expanded ? "Show less" : `Show all ${matched.length}`}
-          </button>
-        )}
-        {value.length > 0 && (
-          <button type="button" onClick={onClear} className="text-xs text-muted-foreground hover:text-foreground">
-            Clear
-          </button>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function DifficultyPills({ options, value, onToggle }: { options: FacetOption[]; value: string[]; onToggle: (v: string) => void; onClear: () => void }) {
-  return (
-    <div className="flex flex-wrap gap-1.5">
-      {(["EASY", "MEDIUM", "HARD"] as const).map((d) => {
-        const opt = options.find((o) => o.value === d);
-        const on = value.includes(d);
-        return (
-          <button
-            key={d}
-            type="button"
-            aria-pressed={on}
-            onClick={() => onToggle(d)}
-            className={cn(
-              "flex items-center gap-1.5 rounded-full border px-4 py-2 text-sm transition-colors hover:bg-muted lg:px-3 lg:py-1",
-              on && cn("border-transparent font-medium", difficultyStyle[d]),
-              !opt?.count && !on && "opacity-50",
-            )}
-          >
-            {difficultyLabel(d)}
-            <span className="text-xs tabular-nums opacity-70">{opt?.count ?? 0}</span>
-          </button>
-        );
-      })}
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------- chips + empty state
-
-function ActiveChips({ filters, facets, update, onClear }: { filters: Filters; facets: Facets; update: (next: Partial<Filters>) => void; onClear: () => void }) {
-  const chips: { key: string; label: string; remove: () => void }[] = [];
-  if (filters.board) chips.push({ key: "board", label: filters.board, remove: () => update({ board: null, curriculum: null, subject: null, topic: [] }) });
-  if (filters.curriculum) chips.push({ key: "curriculum", label: filters.curriculum, remove: () => update({ curriculum: null }) });
-  if (filters.subject) {
-    const s = facets.subjects.find((o) => o.value === filters.subject);
-    chips.push({ key: "subject", label: s?.label ?? filters.subject, remove: () => update({ subject: null, topic: [] }) });
-  }
-  const groups: { key: MultiKey; options: FacetOption[]; format?: (o: FacetOption) => string }[] = [
-    { key: "topic", options: facets.topics },
-    { key: "paper", options: facets.papers, format: (o) => o.label.split(" · ")[0] },
-    { key: "year", options: facets.years },
-    { key: "season", options: facets.seasons },
-    { key: "type", options: facets.types },
-    { key: "difficulty", options: facets.difficulties, format: (o) => difficultyLabel(o.value as "EASY") },
-  ];
-  for (const { key, options, format } of groups) {
-    for (const v of filters[key]) {
-      const opt = options.find((o) => o.value === v) ?? { value: v, label: v, count: 0 };
-      chips.push({ key: `${key}-${v}`, label: format ? format(opt) : opt.label, remove: () => update({ [key]: filters[key].filter((x) => x !== v) } as Partial<Filters>) });
-    }
-  }
-
-  return (
-    <div className="flex flex-wrap items-center gap-2">
-      {chips.map((c) => (
-        <button
-          key={c.key}
-          type="button"
-          onClick={c.remove}
-          className="flex max-w-full items-center gap-1 rounded-full bg-primary/10 py-1 pr-2 pl-3 text-sm text-primary transition-colors hover:bg-primary/15"
-        >
-          <span className="truncate">{c.label}</span>
-          <X className="size-3.5 shrink-0" />
-        </button>
-      ))}
-      {chips.length > 1 && (
-        <button type="button" onClick={onClear} className="px-1 text-sm text-muted-foreground hover:text-foreground">
-          Clear all
-        </button>
-      )}
-    </div>
-  );
-}
+// ---------------------------------------------------------------- empty state
 
 function EmptyBank({ isAdmin, hasDrafts }: { isAdmin: boolean; hasDrafts: boolean }) {
   return (

@@ -118,6 +118,60 @@ export function SelectionBar({ ids, byId }: { ids: string[]; byId: Map<string, B
   );
 }
 
+/**
+ * Inline "selected for PDF" strip (e.g. under the header of the similar-questions page): the last few picks as
+ * removable chips, "+N more", Clear and Download PDF. Questions in `highlight` (the ones on this page) stand out.
+ */
+export function SelectionStrip({ ids, byId, highlight, className }: { ids: string[]; byId: Map<string, BankEntry>; highlight?: Set<string>; className?: string }) {
+  const [open, setOpen] = useState(false);
+  const picked = ids.flatMap((id) => byId.get(id) ?? []);
+  if (picked.length === 0) return null;
+  const MAX_CHIPS = 4;
+  const recent = picked.slice(-MAX_CHIPS).reverse();
+  const more = picked.length - recent.length;
+  const short = (e: BankEntry) => `${e.meta.seasonName} ${e.meta.year} · Q${e.question.number}`;
+
+  return (
+    <div className={cn("enter-up flex flex-wrap items-center gap-2 rounded-xl border border-primary/25 bg-primary/5 px-3 py-2", className)}>
+      <span className="flex items-center gap-1.5 text-sm font-medium">
+        <FileDown className="size-4 text-primary" />
+        {picked.length} selected for PDF
+      </span>
+      <span className="flex min-w-0 flex-wrap items-center gap-1.5">
+        {recent.map((e) => (
+          <button
+            key={e.key}
+            type="button"
+            onClick={() => selection.toggle(e.question.id)}
+            title="Remove from PDF"
+            className={cn(
+              "flex items-center gap-1 rounded-full border bg-background py-1 pr-1.5 pl-2.5 text-xs transition-colors hover:border-destructive/40 hover:text-destructive",
+              highlight?.has(e.question.id) && "border-primary/40 text-primary",
+            )}
+          >
+            {short(e)}
+            <X className="size-3" />
+          </button>
+        ))}
+        {more > 0 && (
+          <button type="button" onClick={() => setOpen(true)} className="rounded-full px-2 py-1 text-xs font-medium text-primary hover:underline">
+            +{more} more
+          </button>
+        )}
+      </span>
+      <span className="ml-auto flex items-center gap-1">
+        <Button variant="ghost" size="sm" onClick={() => selection.clear()} className="text-muted-foreground">
+          Clear
+        </Button>
+        <Button size="sm" className="gap-1.5" onClick={() => setOpen(true)}>
+          <Download className="size-4" /> Download PDF
+        </Button>
+      </span>
+      <SelectionDialog open={open} onOpenChange={setOpen} picked={picked} />
+    </div>
+  );
+}
+
 function SelectionDialog({ open, onOpenChange, picked }: { open: boolean; onOpenChange: (o: boolean) => void; picked: BankEntry[] }) {
   const subjects = [...new Set(picked.map((e) => e.meta.subjectName))];
   const [title, setTitle] = useState("");

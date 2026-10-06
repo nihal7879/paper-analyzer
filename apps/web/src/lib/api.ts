@@ -1,6 +1,7 @@
 // Types mirror apps/api/src/papers/paper.types.ts and catalog.ts
 
-export const API_URL: string = import.meta.env.VITE_API_URL ?? "http://localhost:4100";
+/** Empty = same address as the website (/api, /files go through port 3000 to the API). Set only if the API lives elsewhere. */
+export const API_URL: string = (import.meta.env.VITE_API_URL ?? "").replace(/\/$/, "");
 
 export interface PaperMeta {
   id: string;
@@ -45,6 +46,10 @@ export interface Question {
   topicCode: string | null;
   topic: string;
   subtopic: string;
+  /** Syllabus subtopic code (e.g. "2.3"), null for a free-text subtopic. */
+  subtopicCode?: string | null;
+  /** Finer AI wording of the subtopic, used by search. */
+  subtopicDetail?: string | null;
   difficulty: "EASY" | "MEDIUM" | "HARD";
   keywords: string[];
   page: number;

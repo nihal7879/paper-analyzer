@@ -1,0 +1,452 @@
+=====================================================================
+        PAPER ANALYZER - TECH STACK, SYSTEM FLOW & SCALING PLAN
+        Client: Dubai | Start: ~80 users | Target: 5,000 - 10,000 users
+        Prepared by: Nirav Mehta | Date: 03-Oct-2026
+=====================================================================
+
+CONTENTS
+  1. Product Summary
+  2. Quick Answers (RAG? Redis? BullMQ? CDN? AWS?)
+  3. Tech Stack
+  4. Roles & Approval Flow
+  5. System Flow (Upload -> Process -> Approve -> Student)
+  6. Database Design (Core Tables)
+  7. Phase 1 - Starting Setup (~80 users)
+  8. Phase 2 - Growth (~500 - 2,000 users)
+  9. Phase 3 - Scale (5,000 - 10,000+ users)
+ 10. How We Keep the App Fast
+ 11. Download Feature
+ 12. What Must Be Built Right From Day 1
+ 13. Open Questions for Client
+
+
+---------------------------------------------------------------------
+1. PRODUCT SUMMARY
+---------------------------------------------------------------------
+A past-paper question bank for students (Physics, Biology, Chemistry,
+Maths, etc.), organised by Curriculum -> Level/Grade -> Subject ->
+Paper -> Year -> Season -> Topic.
+
+Student sees:
+  - Question (text + LaTeX equations + cropped diagram image)
+  - MCQ and Theory/Structured questions
+  - [Reveal Answer] button -> official answer / mark scheme
+  - Source info: Subject, Code, Level, Year, Season, Paper No.,
+    Question No., Page No. + [View Source]
+
+AI is used BEHIND THE SCENES to process uploaded PDFs (split
+questions, crop diagrams, tag topic/type/marks, match answers).
+AI does NOT invent answers. Official mark scheme = source of truth.
+Humans (teacher + admin) verify everything before publishing.
+
+
+---------------------------------------------------------------------
+2. QUICK ANSWERS
+---------------------------------------------------------------------
+Q: Is AI needed?
+A: YES - for PDF ingestion only (question detection, topic/subtopic
+   tagging, question type, marks, answer matching). Student-facing
+   pages do not need AI.
+
+Q: Is RAG needed now?
+A: NO. Not for Phase 1.
+   RAG is only needed for features like "AI explain this answer" or
+   "AI tutor chat". Showing questions + answers + filters does NOT
+   need RAG.
+   Add later (Phase 2/3) if client wants:
+     - "Similar questions"         -> needs embeddings + pgvector
+     - Semantic search             -> needs embeddings + pgvector
+     - AI explanation / tutor      -> needs RAG
+   Because we use PostgreSQL, adding pgvector later is easy - no
+   new database needed.
+
+Q: Is LangChain needed?
+A: NO. Call the LLM API directly from NestJS. Add LangChain /
+   LlamaIndex only if RAG becomes complex later.
+
+Q: What AI key is needed?
+A: One LLM API key (e.g. Claude / OpenAI). Later, an embeddings
+   API for similar-question searc
+
+Q: Is Redis + BullMQ needed now?
+A: YES - even at 80 users.
+   Reason: PDF processing + AI calls take seconds to minutes per
+   paper. This must run in the background, not inside an HTTP
+   request. BullMQ (runs on Redis) gives:
+     - background jobs for PDF processing
+     - retries if AI API fails
+     - progress tracking ("Processing 67% - 40/120 questions")
+     - PDF worksheet generation for downloads
+   Redis caching / rate limiting is a bonus, small at 80 users.
+   Cost: runs as a small Docker container on the same server.
+
+Q: Is a CDN needed now?
+A: NO. Add before going above ~500-1,000 users.
+   Images are served from S3/R2 directly in Phase 1.
+
+Q: Is S3 / object storage needed now?
+A: YES. PDFs and cropped images must NOT be stored on server disk
+   or in the database. Options (all S3-compatible, same code):
+     - AWS S3 (UAE region me-central-1) -> if data must stay in UAE
+     - Cloudflare R2 -> cheaper, no download fees, CDN built in
+   AWS is NOT mandatory. Only S3-compatible storage is.
+
+Q: Why PostgreSQL and not MySQL?
+A: - pgvector: AI vectors live in the same DB (no extra vector DB)
+   - JSONB: flexible data (MCQ options, crop coordinates, AI scores)
+   - Recursive queries / ltree: topic -> subtopic tree
+   - Built-in full-text search
+   - Partial indexes (e.g. only PUBLISHED questions)
+   Both can handle the load; PostgreSQL fits this product better.
+
+
+---------------------------------------------------------------------
+3. TECH STACK
+---------------------------------------------------------------------
+Frontend     : Next.js + React + TypeScript + Tailwind CSS
+Math render  : KaTeX (LaTeX equations)
+Backend      : NestJS + TypeScript (modular monolith)
+Database     : PostgreSQL (+ pgvector later)
+ORM          : Prisma or TypeORM
+Queue        : BullMQ
+Cache/Queue  : Redis
+File storage : AWS S3 (UAE) or Cloudflare R2
+PDF parsing  : PDF text/image extraction library + OCR when needed
+AI           : LLM API (extraction, classification)
+               Embeddings API (later - similar questions / RAG)
+PDF generate : Server-side PDF generator (worksheets)
+Auth         : JWT (access + refresh token) + RBAC (role guards)
+Deployment   : Docker + Docker Compose + Nginx (reverse proxy + SSL)
+CI/CD        : GitHub Actions (or similar)
+Monitoring   : Basic logs + uptime check (Phase 1), full later
+
+Backend modules (one NestJS app, separate modules):
+  AuthModule, UserModule, CurriculumModule, SubjectModule,
+  PaperModule, QuestionModule, ReviewModule (approval flow),
+  UploadModule, ProcessingModule (worker), DownloadModule,
+  SearchModule, AIModule, AuditModule
+  (RAGModule / AnalyticsModule -> later)
+
+NO microservices at start. Split heavy parts later only if needed.
+
+
+---------------------------------------------------------------------
+4. ROLES & APPROVAL FLOW
+---------------------------------------------------------------------
+Roles:
+  SUPER ADMIN : manage curriculum, subjects, levels, topic tree,
+                users, AI settings
+  ADMIN       : upload, review, edit, APPROVE & PUBLISH, reject,
+                archive
+  TEACHER     : upload, verify/correct AI extraction, SUBMIT for
+                approval (cannot publish)
+  STUDENT     : browse, filter, reveal answer, bookmark, download,
+                report an error (cannot upload/edit)
+
+Login:
+  - Admins/Teachers: invited by Super Admin (no open signup)
+  - Students: self signup or school/bulk invite
+  - JWT + role guards on backend (/admin routes protected server-side)
+
+Paper / Question status lifecycle:
+
+  UPLOADED -> PROCESSING -> IN_REVIEW -> SUBMITTED -> APPROVED -> PUBLISHED
+                                ^             |
+                                |             v
+                                +-------- REJECTED (with comment)
+                                                       PUBLISHED -> ARCHIVED
+
+Rules:
+  - Status on BOTH paper and each question (approve 38, reject 2)
+  - Students only see status = PUBLISHED (enforced in backend)
+  - Editing a published question creates a REVISION -> needs
+    approval again; live version stays until approved
+  - Audit log: who uploaded / edited / approved / when
+  - Duplicate check: subject + year + season + paper + variant
+
+
+---------------------------------------------------------------------
+5. SYSTEM FLOW
+---------------------------------------------------------------------
+A) UPLOAD & PROCESSING (Admin / Teacher)
+
+  Teacher/Admin
+      |  fills: Curriculum, Level, Subject, Code, Year, Season, Paper
+      |  uploads: Question Paper PDF + Mark Scheme PDF
+      v
+  NestJS API --> saves PDFs to S3/R2 --> creates DB record (UPLOADED)
+      |
+      v
+  BullMQ job (Redis) --> Worker picks job (PROCESSING)
+      |
+      |-- 1. Extract text + images from PDF (OCR if scanned)
+      |-- 2. Split into questions / sub-questions (1a, 1b...)
+      |-- 3. Detect MCQ vs Theory, marks, page number
+      |-- 4. Convert equations to LaTeX
+      |-- 5. Crop diagrams -> WebP -> save to S3/R2
+      |-- 6. LLM: tag topic, subtopic, difficulty
+      |-- 7. Parse mark scheme -> match answers to questions
+      |-- (later) 8. Generate embeddings -> pgvector
+      v
+  PostgreSQL (status = IN_REVIEW)
+      |
+      v
+  Teacher reviews side-by-side (original page vs extracted),
+  fixes text / LaTeX / crop / topic --> SUBMITTED
+      |
+      v
+  Admin approval queue --> APPROVED --> PUBLISHED
+                       \-> REJECTED (back to teacher)
+
+
+B) STUDENT FLOW
+
+  Student login
+      |
+      v
+  Filter: Curriculum > Level > Subject > Paper > Year > Season >
+          Topic > Subtopic > Type (MCQ/Theory) > Difficulty
+      |
+      v
+  Question list (20 per page, infinite scroll)
+      |
+      v
+  Question card:
+     - Question text + LaTeX + cropped diagram
+     - MCQ options (if MCQ)
+     - [Reveal Answer]  -> answer fetched from API on click
+     - Source: Physics 9702 | AS Level | May/June 2025 |
+               Paper 2 | Q14 | Page 7   [View Source]
+     - [Bookmark]  [Report Issue]
+      |
+      v
+  Select questions -> [Download PDF] -> BullMQ job -> PDF -> S3
+                   -> short-lived download link to student
+
+
+---------------------------------------------------------------------
+6. DATABASE DESIGN (CORE TABLES)
+---------------------------------------------------------------------
+users            (id, name, email, password_hash, role, status,
+                  created_at)
+curriculums      (id, name)                       e.g. CIE, Edexcel
+levels           (id, curriculum_id, name)        e.g. IGCSE, AS, A2
+subjects         (id, level_id, name, code)       e.g. Physics 9702
+topics           (id, subject_id, parent_id, name, order)
+                  -> parent_id gives topic -> subtopic tree
+papers           (id, subject_id, year, season, paper_number,
+                  variant, question_pdf_key, markscheme_pdf_key,
+                  source_url, status, uploaded_by, approved_by,
+                  created_at, updated_at)
+questions        (id, paper_id, parent_question_id, question_number,
+                  question_type [MCQ/THEORY/STRUCTURED],
+                  question_text (with LaTeX), marks, difficulty,
+                  page_number, status, ai_confidence (JSONB),
+                  created_at, updated_at)
+question_topics  (question_id, topic_id)     -> many-to-many
+mcq_options      (id, question_id, label [A/B/C/D], option_text,
+                  is_correct)
+answers          (id, question_id, answer_text, mark_scheme_text,
+                  source [OFFICIAL/AI_EXPLANATION])
+question_assets  (id, question_id, asset_type [DIAGRAM/TABLE/GRAPH],
+                  file_key, page_number, crop_coords (JSONB),
+                  alt_text)
+question_revisions (id, question_id, data (JSONB), status,
+                  edited_by, approved_by, created_at)
+review_comments  (id, paper_id, question_id, user_id, comment,
+                  created_at)
+processing_jobs  (id, paper_id, status, progress, error, started_at,
+                  finished_at)
+bookmarks        (user_id, question_id, created_at)
+issue_reports    (id, question_id, user_id, message, status)
+downloads        (id, user_id, type, question_ids, file_key,
+                  created_at)
+audit_logs       (id, user_id, action, entity, entity_id, data,
+                  created_at)
+(later) question_embeddings (question_id, embedding vector)
+
+Key indexes:
+  - papers (subject_id, year, season, paper_number)
+  - questions (paper_id), questions (status)
+  - question_topics (topic_id)
+  - partial index on questions WHERE status = 'PUBLISHED'
+  - full-text index on question_text
+
+Files: store only the KEY/PATH in DB, e.g.
+  questions/9702/2025/mj/p2/q14-diagram.webp
+Frontend adds storage/CDN domain in front.
+
+
+---------------------------------------------------------------------
+7. PHASE 1 - STARTING SETUP (~80 USERS)
+---------------------------------------------------------------------
+Infrastructure: ONE server + object storage
+
+  One VPS / EC2 (2 vCPU, 4-8 GB RAM, 80-100 GB SSD)
+  +--------------------------------------------+
+  |  Docker Compose                            |
+  |   - Nginx (SSL + reverse proxy)            |
+  |   - Next.js (frontend)                     |
+  |   - NestJS (API)                           |
+  |   - Worker (BullMQ - PDF + AI processing)  |
+  |   - PostgreSQL                             |
+  |   - Redis                                  |
+  +--------------------------------------------+
+             |
+             v
+   S3 (UAE) / Cloudflare R2 -> PDFs + cropped images
+
+Included in Phase 1:
+  [YES] PostgreSQL
+  [YES] Redis + BullMQ (background PDF processing)
+  [YES] S3 / R2 object storage
+  [YES] AI LLM API (ingestion only)
+  [YES] Roles + approval flow + audit log
+  [YES] KaTeX, cropped images, source info, reveal answer
+  [YES] PDF download (custom worksheet / original if allowed)
+  [YES] Daily DB backup (to S3) + SSL
+  [NO ] CDN
+  [NO ] RAG / embeddings / pgvector
+  [NO ] Load balancer / multiple servers
+  [NO ] LangChain
+  [NO ] Microservices
+
+Approx monthly cost (rough estimate, verify with provider pricing):
+  Server         : ~USD 20 - 40
+  Storage        : ~USD 1 - 5
+  AI API         : depends on number of papers uploaded
+                   (cost is per upload, NOT per student view)
+  Domain + SSL   : SSL free (Let's Encrypt)
+
+
+---------------------------------------------------------------------
+8. PHASE 2 - GROWTH (~500 - 2,000 USERS)
+---------------------------------------------------------------------
+Trigger: users growing, pages slower, more uploads.
+
+Changes:
+  - Add CDN (CloudFront with S3, or Cloudflare with R2)
+  - Move PostgreSQL to managed DB (AWS RDS / similar) with
+    automatic backups
+  - Move Redis to managed Redis (or keep separate small server)
+  - Move Worker to its own server (heavy PDF jobs won't slow API)
+  - Add Redis caching for topic tree + common filters
+  - Add monitoring + error tracking (e.g. Sentry) + alerts
+  - OPTIONAL: pgvector + embeddings -> "Similar Questions",
+    semantic search
+
+  Users -> CDN -> Nginx -> Next.js + NestJS (server 1)
+                              |
+                Worker (server 2)
+                              |
+           Managed PostgreSQL | Managed Redis | S3/R2
+
+
+---------------------------------------------------------------------
+9. PHASE 3 - SCALE (5,000 - 10,000+ USERS)
+---------------------------------------------------------------------
+Trigger: thousands of users, exam-season traffic spikes.
+
+Changes:
+  - Load balancer + 2 or more NestJS API instances (auto-scaling)
+  - Frontend on Vercel / CDN or multiple instances
+  - Multiple worker instances (parallel PDF processing)
+  - PostgreSQL read replica (student reads go to replica)
+  - Connection pooling (PgBouncer)
+  - Stronger Redis caching
+  - OPTIONAL: RAG + AI explanation / AI tutor (uses pgvector)
+  - Analytics: topic frequency, year trends, student progress
+  - Full monitoring, logging, autoscaling for exam season
+
+                    CDN
+                     |
+              Load Balancer
+               /          \
+        NestJS API      NestJS API   (+ more)
+               \          /
+     +----------+---------+-----------+
+     |          |                     |
+ PostgreSQL   Redis               S3 / R2
+ (primary +  (cache +
+  replica,    BullMQ)
+  pgvector)     |
+           Workers (x N)
+                |
+           LLM API + Embeddings API
+
+IMPORTANT: Phase 1 -> Phase 3 is an INFRASTRUCTURE change, NOT a
+code rewrite, as long as Section 12 is followed.
+
+
+---------------------------------------------------------------------
+10. HOW WE KEEP THE APP FAST
+---------------------------------------------------------------------
+ 1. Do heavy work at upload time (crop, LaTeX, tagging) -> student
+    requests only read ready data.
+ 2. Correct DB indexes (see Section 6).
+ 3. Pagination - 20 questions at a time, never load all.
+ 4. Images converted to WebP (small size).
+ 5. Answer loaded only on [Reveal Answer] click (smaller first load,
+    answers not visible in page source).
+ 6. Next.js static / ISR pages for subject & topic pages.
+ 7. KaTeX rendered server-side or cached.
+ 8. Redis cache for topic tree / filter dropdowns (Phase 2+).
+ 9. CDN for images (Phase 2+).
+10. Background jobs for PDF processing and PDF generation (never
+    block the user).
+
+
+---------------------------------------------------------------------
+11. DOWNLOAD FEATURE
+---------------------------------------------------------------------
+Current decision (pending final confirmation):
+  - All downloads FREE (client is paying for the platform)
+  - NO watermark
+  - Logged-in students only
+  - Every download logged in DB (usage tracking)
+
+Options (to be confirmed):
+  a) Custom worksheet PDF: student selects questions -> app builds
+     PDF (questions only / with answers / student chooses)
+  b) Original past paper PDF + mark scheme download
+     (only if client has rights to redistribute)
+
+How it works:
+  Student selects -> [Download] -> BullMQ job -> worker builds PDF
+  (questions + images + LaTeX + source info) -> saved to S3/R2 ->
+  short-lived signed link (~5 min) -> student downloads.
+  Same worksheet requested again -> reuse existing PDF from storage.
+
+
+---------------------------------------------------------------------
+12. WHAT MUST BE BUILT RIGHT FROM DAY 1
+---------------------------------------------------------------------
+(These cost nothing extra now and are very painful to change later)
+  1. Proper DB schema: curriculum -> level -> subject -> paper ->
+     question -> answer -> asset
+  2. Role + approval flow (teacher -> admin -> publish)
+  3. All files in S3/R2 (never on server disk)
+  4. Background queue (BullMQ) for processing
+  5. Stateless API (JWT) -> easy to add more servers later
+  6. Docker for everything -> easy to move servers
+  7. Daily DB backups
+  8. Environment-based config (.env) -> no hardcoded URLs/keys
+  9. Source/provenance stored for every question
+
+
+---------------------------------------------------------------------
+13. OPEN QUESTIONS FOR CLIENT
+---------------------------------------------------------------------
+  1. Data residency: must data stay in UAE? (decides AWS UAE vs
+     Cloudflare R2)
+  2. Rights: does the client have permission to republish past
+     papers / mark schemes?
+  3. Download: questions only / with answers / student choice?
+     Original paper download allowed?
+  4. Which curriculums, levels and subjects at launch?
+  5. Approx number of papers to upload initially?
+  6. Teacher features: class worksheets / assignments needed?
+  7. Future AI features wanted? (similar questions, AI
+     explanation) -> decides when to add pgvector / RAG
+
+

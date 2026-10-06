@@ -8,6 +8,9 @@ import { Providers } from "@/components/providers";
 import { RouteError } from "@/components/route-error";
 import { TopBar } from "@/components/top-bar";
 import { Skeleton } from "@/components/ui/skeleton";
+import { prefetchBankEarly } from "@/lib/query-client";
+
+prefetchBankEarly();
 
 function Layout() {
   return (
@@ -58,6 +61,7 @@ const router = createBrowserRouter([
     // Each page is its own chunk, so students never download the admin upload code.
     children: [
       { path: "/", lazy: () => import("@/pages/browse").then((m) => ({ Component: m.BrowsePage })) },
+      { path: "/similar/:id", lazy: () => import("@/pages/similar").then((m) => ({ Component: m.SimilarPage })) },
       { path: "/admin/papers", lazy: () => import("@/pages/admin-papers").then((m) => ({ Component: m.AdminPapersPage })) },
       { path: "/admin/papers/:id", lazy: () => import("@/pages/review").then((m) => ({ Component: m.ReviewPage })) },
       { path: "/admin/upload", lazy: () => import("@/pages/upload").then((m) => ({ Component: m.UploadPage })) },

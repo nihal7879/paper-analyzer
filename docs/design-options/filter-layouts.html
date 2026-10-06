@@ -1,0 +1,1007 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Paper Analyzer — Design Options</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Atkinson+Hyperlegible:wght@400;700&family=Lexend:wght@400;500;600&family=Space+Grotesk:wght@400;500;600;700&family=Manrope:wght@400;500;600;700&family=Figtree:wght@400;500;600;700&family=Outfit:wght@400;500;600;700&family=Source+Serif+4:wght@400;600;700&family=Nunito+Sans:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+* { box-sizing: border-box; }
+body { margin: 0; background: #e6e8ec; color: #14161b; font-family: 'Geist', system-ui, sans-serif; }
+button, input, select { font: inherit; color: inherit; }
+button { cursor: pointer; }
+button:disabled { cursor: default; }
+:focus-visible { outline: 2px solid #2447d4; outline-offset: 2px; }
+
+/* ---------- design switcher (not part of the app) ---------- */
+.switcher { position: sticky; top: 0; z-index: 100; background: #111318; color: #eef0f3; padding: 10px 16px; display: flex; flex-direction: column; gap: 8px; box-shadow: 0 4px 20px rgba(0,0,0,.25); }
+.sw-row { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; justify-content: center; }
+.sw-label { font-size: 11px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: #9aa0ad; margin-right: 4px; }
+.sw-btn { display: inline-flex; align-items: center; gap: 8px; height: 34px; padding: 0 12px; border-radius: 8px; border: 1px solid #3a3f4b; background: transparent; color: #e3e5ea; font-size: 13px; white-space: nowrap; }
+.sw-btn:hover { border-color: #6b7180; }
+.sw-btn[aria-pressed="true"] { background: #fff; color: #111318; border-color: #fff; font-weight: 600; }
+.sw-btn.view { height: 38px; font-size: 14px; padding: 0 16px; }
+.sw-btn.view[aria-pressed="true"] { background: #4f6bff; border-color: #4f6bff; color: #fff; }
+.sw-dot { width: 12px; height: 12px; border-radius: 50%; box-shadow: 0 0 0 2px rgba(255,255,255,.25); }
+.sw-sep { width: 1px; height: 22px; background: #3a3f4b; margin: 0 6px; }
+.desc { max-width: 1000px; margin: 14px auto 0; padding: 0 16px; text-align: center; font-size: 14px; line-height: 1.5; color: #353a45; }
+.desc b { color: #111318; }
+.stage { display: flex; justify-content: center; padding: 14px 16px 60px; }
+@media (max-width: 760px) {
+  .switcher { padding: 8px 10px; }
+  .sw-row { flex-wrap: nowrap; justify-content: flex-start; overflow-x: auto; scrollbar-width: none; }
+  .sw-row::-webkit-scrollbar { display: none; }
+  .desc { font-size: 13px; margin-top: 10px; }
+  .stage { padding: 10px 8px 40px; }
+}
+
+/* ---------- the app frame ---------- */
+.frame { container: app / inline-size; width: 100%; max-width: 1320px; min-height: 880px; position: relative; overflow: clip; background: var(--bg); color: var(--text); font-family: var(--font); border-radius: 16px; box-shadow: 0 24px 60px rgba(17,19,24,.18), 0 0 0 1px rgba(17,19,24,.06); transition: background .25s, color .25s; }
+.frame.phone { max-width: 390px; min-height: 844px; border-radius: 32px; }
+
+/* ---------- themes ---------- */
+[data-theme="classic"]  { --bg:#ffffff; --surface:#ffffff; --surface2:#f4f5f7; --text:#14161b; --muted:#5b616e; --border:#e1e4ea; --primary:#2447d4; --primary-soft:#e9edfc; --on-primary:#fff; --good:#047857; --good-soft:#e6f5ee; --bad:#b91c1c; --bad-soft:#fdeded; --radius:14px; --font:'Geist',system-ui,sans-serif; --easy:#e3f5ec; --easy-t:#036646; --med:#fdf0de; --med-t:#9a4d07; --hard:#fde7e7; --hard-t:#a51d1d; --shadow:0 12px 32px rgba(17,19,24,.14); }
+[data-theme="midnight"] { --bg:#0c0e13; --surface:#141720; --surface2:#1b1f2a; --text:#e9ebf1; --muted:#a0a7b7; --border:#2a2f3b; --primary:#93a2ff; --primary-soft:#232845; --on-primary:#0c0e13; --good:#4ade80; --good-soft:#10291b; --bad:#f87171; --bad-soft:#2e1517; --radius:14px; --font:'Geist',system-ui,sans-serif; --easy:#10291b; --easy-t:#6ee7a2; --med:#2e2310; --med-t:#f6bf6b; --hard:#2e1517; --hard-t:#fca5a5; --shadow:0 16px 40px rgba(0,0,0,.55); }
+[data-theme="teal"]     { --bg:#f2f6f5; --surface:#ffffff; --surface2:#e8f0ee; --text:#0f1f1c; --muted:#4a5d59; --border:#d3e0dc; --primary:#0f6b63; --primary-soft:#dcefeb; --on-primary:#fff; --good:#166534; --good-soft:#e5f4e8; --bad:#b42318; --bad-soft:#fdecea; --radius:16px; --font:'Atkinson Hyperlegible',system-ui,sans-serif; --easy:#e5f4e8; --easy-t:#166534; --med:#fbf0dc; --med-t:#8a4b06; --hard:#fdecea; --hard-t:#a11a1a; --shadow:0 12px 32px rgba(15,31,28,.14); }
+[data-theme="notebook"] { --bg:#f6f4ee; --surface:#fffdf8; --surface2:#efebe1; --text:#1e1a15; --muted:#655d50; --border:#e2dbcd; --primary:#b93d0c; --primary-soft:#fae6da; --on-primary:#fff; --good:#15703a; --good-soft:#e7f3e9; --bad:#b4231b; --bad-soft:#fbe9e7; --radius:10px; --font:'Lexend',system-ui,sans-serif; --easy:#e7f3e9; --easy-t:#15703a; --med:#f9ecd6; --med-t:#8c4a05; --hard:#fbe9e7; --hard-t:#a3201a; --shadow:0 12px 32px rgba(30,26,21,.14); }
+[data-theme="reading"]  { --bg:#f4ecd8; --surface:#fbf6ea; --surface2:#efe4cc; --text:#2b2216; --muted:#6b5b45; --border:#e2d4b4; --primary:#8a4b12; --primary-soft:#f1e0c4; --on-primary:#fff; --good:#3f6b21; --good-soft:#e5ecd2; --bad:#9b2c1f; --bad-soft:#f5dfd6; --radius:12px; --font:'Source Serif 4',Georgia,serif; --easy:#e5ecd2; --easy-t:#3f6b21; --med:#f3e2c1; --med-t:#7a4a0c; --hard:#f5dfd6; --hard-t:#8f2a1d; --shadow:0 12px 32px rgba(60,40,10,.16); }
+[data-theme="graphite"] { --bg:#16181d; --surface:#1e2127; --surface2:#262a32; --text:#eef0f2; --muted:#a3a9b4; --border:#323741; --primary:#c6f432; --primary-soft:#2c3318; --on-primary:#16181d; --good:#4ade80; --good-soft:#132a1c; --bad:#fb7185; --bad-soft:#331820; --radius:12px; --font:'Space Grotesk',system-ui,sans-serif; --easy:#132a1c; --easy-t:#86efac; --med:#33280f; --med-t:#fcd34d; --hard:#331820; --hard-t:#fda4af; --shadow:0 16px 40px rgba(0,0,0,.55); }
+[data-theme="violet"]   { --bg:#f7f5ff; --surface:#ffffff; --surface2:#f0ecfd; --text:#1a1430; --muted:#5d5675; --border:#e2dcf5; --primary:#6d28d9; --primary-soft:#ede5fd; --on-primary:#fff; --good:#047857; --good-soft:#e6f5ee; --bad:#be123c; --bad-soft:#fdeaf0; --radius:18px; --font:'Manrope',system-ui,sans-serif; --easy:#e6f5ee; --easy-t:#047857; --med:#fdf0de; --med-t:#9a4d07; --hard:#fdeaf0; --hard-t:#9f1239; --shadow:0 14px 36px rgba(60,30,120,.16); }
+[data-theme="ocean"]    { --bg:#eef6fa; --surface:#ffffff; --surface2:#e4f0f7; --text:#0b1d2a; --muted:#4b6070; --border:#d2e3ee; --primary:#0369a1; --primary-soft:#e0f0fa; --on-primary:#fff; --good:#047857; --good-soft:#e6f5ee; --bad:#b91c1c; --bad-soft:#fdeded; --radius:16px; --font:'Figtree',system-ui,sans-serif; --easy:#e6f5ee; --easy-t:#047857; --med:#fdf0de; --med-t:#9a4d07; --hard:#fdeded; --hard-t:#a51d1d; --shadow:0 14px 36px rgba(11,29,42,.14); }
+[data-theme="coral"]    { --bg:#fff7f4; --surface:#ffffff; --surface2:#fdeee8; --text:#2a1712; --muted:#6e5650; --border:#f2ddd5; --primary:#c2412d; --primary-soft:#fde5de; --on-primary:#fff; --good:#15703a; --good-soft:#e7f3e9; --bad:#b4231b; --bad-soft:#fbe9e7; --radius:14px; --font:'Outfit',system-ui,sans-serif; --easy:#e7f3e9; --easy-t:#15703a; --med:#fbf0dc; --med-t:#8a4b06; --hard:#fbe9e7; --hard-t:#a3201a; --shadow:0 14px 36px rgba(42,23,18,.14); }
+[data-theme="plum"]     { --bg:#fbf6fb; --surface:#ffffff; --surface2:#f6ecf6; --text:#24112a; --muted:#6a5570; --border:#ecdcee; --primary:#9b1fa6; --primary-soft:#f6e3f8; --on-primary:#fff; --good:#047857; --good-soft:#e6f5ee; --bad:#be123c; --bad-soft:#fdeaf0; --radius:16px; --font:'Nunito Sans',system-ui,sans-serif; --easy:#e6f5ee; --easy-t:#047857; --med:#fdf0de; --med-t:#9a4d07; --hard:#fdeaf0; --hard-t:#9f1239; --shadow:0 14px 36px rgba(60,10,70,.16); }
+[data-theme="slate"]    { --bg:#f3f4f6; --surface:#ffffff; --surface2:#eceef2; --text:#0f172a; --muted:#545e70; --border:#dde1e8; --primary:#0f172a; --primary-soft:#e2e6ee; --on-primary:#fff; --good:#047857; --good-soft:#e6f5ee; --bad:#b91c1c; --bad-soft:#fdeded; --radius:12px; --font:'Geist',system-ui,sans-serif; --easy:#e3f5ec; --easy-t:#036646; --med:#fdf0de; --med-t:#9a4d07; --hard:#fde7e7; --hard-t:#a51d1d; --shadow:0 12px 32px rgba(15,23,42,.14); }
+
+/* ---------- shared app pieces ---------- */
+.appbar { display: flex; align-items: center; gap: 12px; height: 58px; padding: 0 20px; border-bottom: 1px solid var(--border); background: var(--surface); }
+.logo { width: 32px; height: 32px; border-radius: 9px; display: flex; align-items: center; justify-content: center; background: var(--primary); color: var(--on-primary); flex: none; }
+.appname { font-weight: 600; font-size: 16px; }
+.apptitle { border-left: 1px solid var(--border); padding-left: 14px; line-height: 1.25; }
+.apptitle b { display: block; font-size: 14px; }
+.apptitle span { display: block; font-size: 12px; color: var(--muted); }
+.icon-btn { margin-left: auto; width: 38px; height: 38px; border-radius: 10px; border: 1px solid var(--border); background: var(--surface); color: var(--text); display: inline-flex; align-items: center; justify-content: center; }
+.body { padding: 22px 24px 40px; display: flex; flex-direction: column; gap: 14px; }
+.layout { display: flex; gap: 22px; align-items: flex-start; }
+.main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 14px; }
+.panel { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); }
+.side { width: 290px; flex: none; }
+.muted { color: var(--muted); }
+.label { font-size: 11.5px; font-weight: 600; letter-spacing: .07em; text-transform: uppercase; color: var(--muted); }
+.search { display: flex; align-items: center; gap: 10px; height: 44px; padding: 0 14px; border-radius: 12px; border: 1px solid var(--border); background: var(--surface); }
+.search input { flex: 1; min-width: 0; border: 0; outline: none; background: transparent; font-size: 15px; }
+.search:focus-within { border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-soft); }
+.toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.count { font-size: 14px; color: var(--muted); margin-right: auto; }
+.count b { color: var(--text); }
+.btn { display: inline-flex; align-items: center; gap: 8px; height: 40px; padding: 0 14px; border-radius: 10px; border: 1px solid var(--border); background: var(--surface); font-size: 14px; white-space: nowrap; }
+.btn:hover:not(:disabled) { background: var(--surface2); }
+.btn:disabled { opacity: .4; }
+.btn.primary { background: var(--primary); color: var(--on-primary); border-color: var(--primary); font-weight: 600; }
+.btn.primary:hover:not(:disabled) { background: var(--primary); filter: brightness(1.08); }
+.btn.ghost { border-color: transparent; background: transparent; color: var(--muted); }
+.badge { min-width: 20px; height: 20px; padding: 0 6px; border-radius: 10px; background: var(--primary); color: var(--on-primary); font-size: 11.5px; font-weight: 700; display: inline-flex; align-items: center; justify-content: center; }
+.chip { display: inline-flex; align-items: center; gap: 6px; border-radius: 999px; padding: 6px 12px; font-size: 13px; border: 1px solid var(--border); background: var(--surface); white-space: nowrap; transition: background .15s, border-color .15s, color .15s; }
+.chip:hover { border-color: color-mix(in oklch, var(--primary) 45%, var(--border)); }
+.chip.on { border-color: var(--primary); background: var(--primary-soft); color: var(--primary); font-weight: 600; }
+.chip .n { font-size: 11.5px; opacity: .7; font-weight: 400; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chips.scroll { flex-wrap: nowrap; overflow-x: auto; padding-bottom: 2px; scrollbar-width: none; }
+.active-chip { display: inline-flex; align-items: center; gap: 6px; border: 0; border-radius: 999px; padding: 5px 10px 5px 12px; background: var(--primary-soft); color: var(--primary); font-size: 13px; }
+.diff-easy.on { background: var(--easy); color: var(--easy-t); border-color: transparent; }
+.diff-med.on { background: var(--med); color: var(--med-t); border-color: transparent; }
+.diff-hard.on { background: var(--hard); color: var(--hard-t); border-color: transparent; }
+.row-btn { display: flex; align-items: center; gap: 10px; width: 100%; border: 0; background: transparent; padding: 7px 8px; border-radius: 8px; text-align: left; font-size: 14px; }
+.row-btn:hover { background: var(--surface2); }
+.row-btn .n { margin-left: auto; font-size: 12px; color: var(--muted); }
+.box { width: 17px; height: 17px; border-radius: 5px; flex: none; border: 1.5px solid var(--border); display: inline-flex; align-items: center; justify-content: center; color: var(--on-primary); }
+.box.on { background: var(--primary); border-color: var(--primary); }
+.radio { width: 17px; height: 17px; border-radius: 50%; flex: none; border: 1.5px solid var(--border); display: inline-flex; align-items: center; justify-content: center; }
+.radio.on { border-color: var(--primary); }
+.radio.on::after { content: ''; width: 8px; height: 8px; border-radius: 50%; background: var(--primary); }
+.chev { width: 26px; height: 30px; border: 0; background: transparent; color: var(--muted); display: inline-flex; align-items: center; justify-content: center; flex: none; border-radius: 6px; }
+.chev svg { transition: transform .2s; }
+.chev.open svg { transform: rotate(90deg); }
+.subs { margin-left: 13px; padding-left: 10px; border-left: 1px solid var(--border); }
+.subs .row-btn { font-size: 13.5px; padding: 5px 8px; }
+select.sel { height: 40px; border-radius: 10px; border: 1px solid var(--border); background: var(--surface); padding: 0 10px; font-size: 14px; }
+.yr { position: relative; height: 6px; border-radius: 6px; background: var(--surface2); margin: 10px 9px; }
+.yr .fill { position: absolute; top: 0; bottom: 0; border-radius: 6px; background: var(--primary); }
+.yr .th { position: absolute; top: 50%; width: 18px; height: 18px; margin: -9px 0 0 -9px; border-radius: 50%; border: 2px solid var(--primary); background: var(--surface); box-shadow: 0 1px 3px rgba(0,0,0,.2); }
+.seg { display: inline-flex; padding: 3px; border-radius: 11px; background: var(--surface2); gap: 2px; flex-wrap: wrap; }
+.seg button { border: 0; background: transparent; padding: 7px 12px; border-radius: 8px; font-size: 13px; color: var(--muted); white-space: nowrap; }
+.seg button.on { background: var(--surface); color: var(--text); font-weight: 600; box-shadow: 0 1px 3px rgba(0,0,0,.12); }
+.scrim { position: absolute; inset: 0; z-index: 30; border: 0; background: transparent; cursor: default; }
+.pop { position: absolute; z-index: 31; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); padding: 12px; }
+
+/* question cards */
+.card { border: 1px solid var(--border); background: var(--surface); border-radius: var(--radius); overflow: hidden; }
+.card-h { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; padding: 11px 18px; background: var(--surface2); border-bottom: 1px solid var(--border); }
+.card-h b { font-size: 14px; }
+.card-h .acts { display: flex; gap: 6px; margin-left: auto; align-items: center; }
+.mini { display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 10px; border: 0; border-radius: 8px; background: transparent; color: var(--muted); font-size: 12px; }
+.mini.out { border: 1px solid var(--border); background: var(--surface); font-weight: 600; }
+.mini.on { background: var(--primary); color: var(--on-primary); border-color: var(--primary); }
+.card-b { padding: 18px; display: flex; flex-direction: column; gap: 13px; }
+.tags { display: flex; flex-wrap: wrap; gap: 6px; }
+.tag { border: 1px solid var(--border); border-radius: 999px; padding: 2px 10px; font-size: 12px; }
+.qt { margin: 0; font-size: 16px; line-height: 1.65; white-space: pre-line; }
+.opt { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 50px; padding: 8px 12px; border-radius: 12px; border: 1.5px solid var(--border); background: var(--surface); text-align: left; font-size: 15px; transition: background .2s, border-color .2s, opacity .2s; }
+.opt:hover:not(:disabled) { border-color: color-mix(in oklch, var(--primary) 45%, var(--border)); }
+.opt .l { width: 30px; height: 30px; border-radius: 50%; flex: none; display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 700; border: 1.5px solid var(--border); }
+.opt.right { border-color: var(--good); background: var(--good-soft); }
+.opt.right .l { background: var(--good); border-color: var(--good); color: #fff; }
+.opt.wrong { border-color: var(--bad); background: var(--bad-soft); }
+.opt.wrong .l { background: var(--bad); border-color: var(--bad); color: #fff; }
+.opt.faded { opacity: .55; }
+.fb { display: flex; justify-content: space-between; align-items: center; gap: 8px; border-radius: 10px; padding: 9px 12px; font-size: 14px; font-weight: 600; }
+.fb.ok { background: var(--good-soft); color: var(--good); }
+.fb.no { background: var(--bad-soft); color: var(--bad); }
+.fb button { border: 0; background: transparent; color: var(--muted); font-size: 12px; font-weight: 500; }
+.ms { border: 1px solid var(--good); background: var(--good-soft); border-radius: 10px; padding: 12px 16px; font-size: 14px; line-height: 1.6; white-space: pre-line; }
+.similar { border: 0; border-top: 1px solid var(--border); background: transparent; padding: 12px 0 0; color: var(--primary); font-size: 14px; font-weight: 500; display: flex; gap: 8px; align-items: center; width: 100%; text-align: left; }
+.similar:hover { text-decoration: underline; }
+.sim-rows { display: grid; gap: 6px; }
+.sim-row { display: grid; gap: 2px; border: 1px solid var(--border); background: var(--surface); border-radius: 10px; padding: 9px 12px; text-align: left; }
+.sim-row:hover { background: var(--surface2); }
+.sim-row b { font-size: 13.5px; }
+.sim-row span { font-size: 12px; color: var(--muted); }
+.sel-bar { position: sticky; bottom: 14px; display: flex; justify-content: center; padding: 0 14px 14px; z-index: 20; pointer-events: none; }
+.sel-bar > div { pointer-events: auto; display: flex; align-items: center; gap: 10px; width: 100%; max-width: 520px; padding: 8px 8px 8px 18px; border-radius: 16px; border: 1px solid var(--border); background: var(--surface); box-shadow: var(--shadow); }
+
+/* ---------- arrows + windows (in every design) ---------- */
+.layer { position: fixed; inset: 0; z-index: 90; display: flex; justify-content: center; align-items: flex-start; padding: 70px 16px 24px; }
+.layer .dim { position: absolute; inset: 0; border: 0; background: rgba(10,12,18,.45); cursor: default; }
+.win { position: relative; width: min(780px, 100%); max-height: calc(100vh - 100px); display: flex; flex-direction: column; background: var(--surface); color: var(--text); font-family: var(--font); border-radius: calc(var(--radius) + 2px); box-shadow: 0 30px 80px rgba(0,0,0,.35); animation: rise .22s ease; }
+.frame.phone .win { width: min(374px, 100%); }
+@keyframes rise { from { opacity: 0; transform: translateY(10px) scale(.985); } }
+.win-h { display: flex; align-items: center; gap: 12px; padding: 12px 16px; border-bottom: 1px solid var(--border); font-size: 14px; }
+.win-h b { font-weight: 600; }
+.win-body { overflow: auto; }
+.win-body .card { border: 0; border-radius: 0; }
+.kbd { display: inline-flex; align-items: center; justify-content: center; min-width: 20px; height: 20px; padding: 0 4px; border: 1px solid var(--border); border-radius: 5px; background: var(--surface2); font-size: 11px; }
+.dots { display: inline-flex; gap: 5px; align-items: center; }
+.dots i { width: 7px; height: 7px; border-radius: 50%; background: var(--border); transition: background .2s, width .2s; }
+.dots i.on { background: var(--primary); width: 18px; border-radius: 4px; }
+.out-arrow { position: absolute; top: 230px; width: 50px; height: 50px; border-radius: 50%; border: 1px solid var(--border); background: var(--surface); color: var(--text); box-shadow: var(--shadow); display: flex; align-items: center; justify-content: center; transition: transform .15s, opacity .15s; z-index: 2; }
+.out-arrow:hover:not(:disabled) { transform: scale(1.07); }
+.out-arrow:disabled { opacity: 0; pointer-events: none; }
+.out-arrow.l { left: -66px; }
+.out-arrow.r { right: -66px; }
+.in-arrow { width: 34px; height: 34px; border-radius: 10px; border: 1px solid var(--border); background: var(--surface); color: var(--text); display: inline-flex; align-items: center; justify-content: center; }
+.in-arrow:disabled { opacity: .35; }
+.nav-bar { display: none; gap: 8px; padding: 10px 12px; border-top: 1px solid var(--border); background: var(--surface); }
+.nav-bar .btn { flex: 1; justify-content: center; }
+.x-btn { margin-left: auto; width: 32px; height: 32px; border-radius: 8px; border: 0; background: transparent; color: var(--muted); display: inline-flex; align-items: center; justify-content: center; }
+.x-btn:hover { background: var(--surface2); color: var(--text); }
+
+/* ---------- filter designs ---------- */
+.acc-sec { border-top: 1px solid var(--border); }
+.acc-sec:first-child { border-top: 0; }
+.acc-h { display: flex; align-items: center; gap: 10px; width: 100%; border: 0; background: transparent; padding: 13px 16px; text-align: left; }
+.acc-h .t { font-size: 13px; font-weight: 600; }
+.acc-h .s { font-size: 12.5px; color: var(--muted); margin-left: auto; max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.acc-h .s.on { color: var(--primary); font-weight: 600; }
+.acc-h svg { flex: none; color: var(--muted); transition: transform .2s; }
+.acc-sec.open .acc-h svg { transform: rotate(180deg); }
+.acc-b { padding: 0 12px 14px; display: grid; gap: 10px; animation: drop .2s ease; }
+@keyframes drop { from { opacity: 0; transform: translateY(-4px); } }
+.today-sec { border-top: 1px solid var(--border); padding: 0 16px; }
+.today-sec > button { display: flex; width: 100%; align-items: center; justify-content: space-between; border: 0; background: transparent; padding: 12px 0; font-size: 12px; font-weight: 600; letter-spacing: .07em; text-transform: uppercase; color: var(--muted); }
+.today-sec > button svg { transition: transform .2s; }
+.today-sec.open > button svg { transform: rotate(90deg); }
+.today-sec > div { padding-bottom: 12px; display: grid; gap: 8px; animation: drop .2s ease; }
+.fbar { position: relative; }
+.fpills { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.fpill { display: inline-flex; align-items: center; gap: 6px; height: 40px; padding: 0 14px; border-radius: 10px; border: 1px solid var(--border); background: var(--surface); font-size: 14px; white-space: nowrap; }
+.fpill.set { border-color: var(--primary); color: var(--primary); font-weight: 600; }
+.fpill.open { background: var(--primary-soft); border-color: var(--primary); }
+.mega { left: 0; right: 0; top: 52px; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 18px; padding: 18px; }
+.mega h4 { margin: 0 0 6px; font-size: 14px; display: flex; align-items: center; gap: 8px; }
+.tabs { display: grid; grid-template-columns: repeat(4, 1fr); gap: 2px; padding: 4px; margin: 10px; border-radius: 12px; background: var(--surface2); }
+.tabs button { border: 0; background: transparent; border-radius: 9px; padding: 8px 4px; font-size: 13px; color: var(--muted); display: flex; flex-direction: column; align-items: center; gap: 3px; position: relative; }
+.tabs button.on { background: var(--surface); color: var(--text); font-weight: 600; box-shadow: 0 1px 3px rgba(0,0,0,.1); }
+.tabs .dot { position: absolute; top: 5px; right: 10px; width: 7px; height: 7px; border-radius: 50%; background: var(--primary); }
+.tab-body { padding: 4px 14px 16px; display: grid; gap: 14px; min-height: 380px; align-content: start; animation: drop .2s ease; }
+.rail { width: 76px; flex: none; display: flex; flex-direction: column; gap: 6px; padding: 10px 8px; position: sticky; top: 14px; }
+.rail button { position: relative; border: 0; background: transparent; border-radius: 12px; padding: 10px 4px; display: flex; flex-direction: column; align-items: center; gap: 5px; font-size: 11px; color: var(--muted); }
+.rail button:hover { background: var(--surface2); color: var(--text); }
+.rail button.on { background: var(--primary); color: var(--on-primary); }
+.rail .badge { position: absolute; top: 4px; right: 6px; min-width: 16px; height: 16px; font-size: 10px; padding: 0 4px; }
+.rail button.on .badge { background: var(--on-primary); color: var(--primary); }
+.flyout { left: 100px; top: 0; width: 330px; animation: slide .2s ease; }
+@keyframes slide { from { opacity: 0; transform: translateX(-8px); } }
+.smart { position: relative; }
+.smart .search { height: auto; min-height: 52px; padding: 7px 12px; flex-wrap: wrap; border-radius: 16px; }
+.smart .search input { min-width: 160px; height: 36px; }
+.sugg { left: 0; right: 0; top: calc(100% + 6px); padding: 8px; display: grid; gap: 2px; max-height: 460px; overflow: auto; }
+.sugg .grp { font-size: 11px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; color: var(--muted); padding: 8px 10px 4px; }
+.sugg .it { display: flex; align-items: center; gap: 10px; border: 0; background: transparent; padding: 9px 10px; border-radius: 10px; text-align: left; font-size: 14px; width: 100%; }
+.sugg .it:hover { background: var(--surface2); }
+.sugg .it .k { font-size: 11px; font-weight: 700; color: var(--primary); background: var(--primary-soft); padding: 2px 8px; border-radius: 6px; }
+.sugg .it .n { margin-left: auto; font-size: 12px; color: var(--muted); }
+.addf { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.chapters { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px; }
+.chapter { border: 1.5px solid var(--border); background: var(--surface); border-radius: var(--radius); padding: 14px; text-align: left; display: flex; flex-direction: column; gap: 8px; min-width: 150px; transition: border-color .15s, transform .15s; }
+.chapter:hover { transform: translateY(-2px); }
+.chapter.on { border-color: var(--primary); background: var(--primary-soft); }
+.chapter .num { width: 34px; height: 34px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-weight: 700; background: var(--surface2); color: var(--muted); }
+.chapter.on .num { background: var(--primary); color: var(--on-primary); }
+.chapter .nm { font-size: 14px; font-weight: 600; line-height: 1.3; }
+.chapter .bar { height: 4px; border-radius: 4px; background: var(--surface2); overflow: hidden; }
+.chapter .bar span { display: block; height: 100%; background: var(--primary); opacity: .7; }
+.crumb { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 14px; }
+.crumb select { border: 0; background: transparent; font-weight: 600; font-size: 14px; color: var(--text); padding: 4px 2px; }
+.banner { border-radius: var(--radius); background: var(--primary); color: var(--on-primary); padding: 20px 22px; display: flex; flex-wrap: wrap; gap: 14px 20px; align-items: flex-end; justify-content: space-between; }
+.banner h2 { margin: 0; font-size: 24px; }
+.banner p { margin: 4px 0 0; opacity: .85; font-size: 14px; }
+.banner .sels { display: flex; flex-wrap: wrap; gap: 8px; }
+.banner select { height: 40px; border-radius: 10px; border: 1px solid rgba(255,255,255,.4); background: rgba(255,255,255,.14); color: inherit; padding: 0 10px; font-size: 14px; }
+.banner select option { color: #111; }
+.modal-g { display: grid; grid-template-columns: 1.3fr 1fr 1fr; gap: 22px; padding: 18px 20px; }
+.modal-f { display: flex; justify-content: space-between; gap: 10px; padding: 14px 20px; border-top: 1px solid var(--border); }
+.col { display: grid; gap: 10px; align-content: start; }
+.dock { position: sticky; bottom: 16px; z-index: 25; display: flex; justify-content: center; pointer-events: none; }
+.dock > div { pointer-events: auto; display: flex; gap: 4px; padding: 6px; border-radius: 999px; background: var(--surface); border: 1px solid var(--border); box-shadow: var(--shadow); overflow-x: auto; max-width: 100%; scrollbar-width: none; }
+.dock button { display: inline-flex; align-items: center; gap: 6px; height: 40px; padding: 0 14px; border: 0; border-radius: 999px; background: transparent; font-size: 14px; white-space: nowrap; color: var(--text); }
+.dock button.on { background: var(--primary); color: var(--on-primary); font-weight: 600; }
+.dock button .badge { height: 18px; min-width: 18px; font-size: 10.5px; }
+.dock button.on .badge { background: var(--on-primary); color: var(--primary); }
+.dock-sheet { position: sticky; bottom: 76px; z-index: 26; margin: 0 auto; width: min(560px, 100%); animation: rise .2s ease; }
+.ytabs { display: flex; gap: 8px; overflow-x: auto; scrollbar-width: none; padding-bottom: 2px; }
+.ytab { flex: none; border: 0; border-radius: 10px; padding: 9px 14px; font-size: 14px; background: var(--surface2); color: var(--text); white-space: nowrap; font-weight: 500; }
+.ytab.on { background: var(--primary); color: var(--on-primary); }
+.ysub { display: flex; gap: 8px; overflow-x: auto; scrollbar-width: none; padding-bottom: 2px; }
+
+/* ---------- question-view designs ---------- */
+.progress { height: 6px; border-radius: 6px; background: var(--surface2); overflow: hidden; }
+.progress span { display: block; height: 100%; background: var(--primary); border-radius: 6px; transition: width .3s; }
+.focus-stage { position: relative; width: 100%; max-width: 780px; margin: 0 auto; }
+.focus-stage .card { animation: rise .25s ease; }
+.split { display: grid; grid-template-columns: 340px minmax(0, 1fr); gap: 18px; align-items: start; }
+.qlist { display: grid; gap: 4px; padding: 8px; max-height: 720px; overflow: auto; }
+.qrow { display: grid; grid-template-columns: auto 1fr auto; gap: 10px; align-items: center; border: 0; background: transparent; border-radius: 10px; padding: 10px; text-align: left; }
+.qrow:hover { background: var(--surface2); }
+.qrow.on { background: var(--primary-soft); }
+.qrow .st { width: 10px; height: 10px; border-radius: 50%; background: var(--border); }
+.qrow .st.ok { background: var(--good); }
+.qrow .st.no { background: var(--bad); }
+.qrow b { font-size: 13.5px; display: block; }
+.qrow small { font-size: 12px; color: var(--muted); display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+.tile { border: 1px solid var(--border); background: var(--surface); border-radius: var(--radius); padding: 16px; display: flex; flex-direction: column; gap: 10px; text-align: left; transition: transform .15s, box-shadow .15s, border-color .15s; }
+.tile:hover { transform: translateY(-3px); box-shadow: var(--shadow); border-color: color-mix(in oklch, var(--primary) 40%, var(--border)); }
+.tile .ex { font-size: 14.5px; line-height: 1.5; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.tile .ft { margin-top: auto; display: flex; justify-content: space-between; align-items: center; font-size: 12.5px; color: var(--muted); }
+.tile .ft span:last-child { color: var(--primary); font-weight: 600; }
+.score { display: flex; gap: 8px; flex-wrap: wrap; }
+.score span { border-radius: 999px; padding: 4px 12px; font-size: 13px; font-weight: 600; }
+.score .ok { background: var(--good-soft); color: var(--good); }
+.score .no { background: var(--bad-soft); color: var(--bad); }
+.score .left { background: var(--surface2); color: var(--muted); }
+.summary { text-align: center; padding: 40px 24px; display: grid; gap: 14px; justify-items: center; }
+.summary .big { font-size: 56px; font-weight: 700; color: var(--primary); line-height: 1; }
+
+/* ---------- similar-question designs ---------- */
+.with-drawer { display: grid; grid-template-columns: minmax(0, 1fr) 420px; gap: 18px; align-items: start; }
+.sim-drawer { position: sticky; top: 14px; display: flex; flex-direction: column; overflow: hidden; }
+.sim-drawer .head { display: flex; align-items: center; gap: 8px; padding: 12px 14px; border-bottom: 1px solid var(--border); }
+.numtabs { display: flex; gap: 6px; padding: 10px 14px 0; }
+.numtabs button { width: 34px; height: 34px; border-radius: 10px; border: 1px solid var(--border); background: var(--surface); font-weight: 600; font-size: 13px; }
+.numtabs button.on { background: var(--primary); color: var(--on-primary); border-color: var(--primary); }
+.sim-drawer .card { border: 0; border-radius: 0; }
+.carousel { position: relative; }
+.car-track { overflow: hidden; border-radius: var(--radius); }
+.car-inner { display: flex; transition: transform .38s cubic-bezier(.2,.8,.2,1); }
+.car-inner > div { flex: 0 0 100%; padding: 1px; }
+.car-head { display: flex; align-items: center; gap: 10px; }
+.compare { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 18px; align-items: start; }
+.compare .colh { display: flex; align-items: center; gap: 8px; min-height: 40px; margin-bottom: 8px; font-size: 14px; }
+.sheet { position: fixed; left: 50%; bottom: 0; transform: translateX(-50%); width: min(760px, 100%); max-height: 78vh; z-index: 91; display: flex; flex-direction: column; background: var(--surface); color: var(--text); font-family: var(--font); border-radius: 22px 22px 0 0; box-shadow: 0 -20px 60px rgba(0,0,0,.3); animation: up .28s cubic-bezier(.2,.8,.2,1); }
+.frame.phone .sheet { width: min(390px, 100%); }
+@keyframes up { from { transform: translate(-50%, 40px); opacity: 0; } }
+.sheet .handle { width: 44px; height: 5px; border-radius: 5px; background: var(--border); margin: 10px auto 2px; }
+.sheet .card { border: 0; border-radius: 0; }
+
+/* ---------- phone / narrow screens (the frame's own width) ---------- */
+@container app (max-width: 700px) {
+  .apptitle { display: none; }
+  .appbar { padding: 0 14px; height: 54px; }
+  .body { padding: 14px 12px 32px; gap: 12px; }
+  .layout { flex-direction: column; align-items: stretch; gap: 14px; }
+  .side { width: 100%; position: static !important; }
+  .toolbar .count { flex-basis: 100%; order: 3; margin: 0; }
+  .card-h { padding: 10px 14px; }
+  .card-b { padding: 14px; gap: 12px; }
+  .qt { font-size: 15.5px; }
+  .opt { min-height: 48px; font-size: 14.5px; }
+  .chips.scroll, .fpills { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; padding-bottom: 2px; }
+  .fpill { flex: none; }
+  .pop { left: 0 !important; right: 0 !important; width: auto !important; max-height: 70vh; overflow: auto; }
+  .pop > div { width: auto !important; max-width: 100%; }
+  .mega { grid-template-columns: 1fr; top: 54px; max-height: 520px; overflow: auto; }
+  .rail { width: auto; flex-direction: row; position: static; overflow-x: auto; padding: 6px; }
+  .rail button { min-width: 66px; flex: none; }
+  .flyout { top: 78px; }
+  .chapters { display: flex; overflow-x: auto; padding-bottom: 4px; scrollbar-width: none; }
+  .chapter { min-width: 150px; flex: none; }
+  .seg { width: 100%; }
+  .seg button { flex: 1; }
+  .banner { padding: 16px; }
+  .banner h2 { font-size: 20px; }
+  .banner .sels { width: 100%; }
+  .banner select { flex: 1 1 140px; }
+  .modal-g { grid-template-columns: 1fr; gap: 18px; }
+  .smart .search input { min-width: 120px; }
+  .crumb select { max-width: 46%; }
+  .out-arrow { display: none; }
+  .nav-bar { display: flex; }
+  .kbd-hint { display: none; }
+  .split { grid-template-columns: 1fr; }
+  .qlist { max-height: none; display: flex; overflow-x: auto; padding: 6px; }
+  .qrow { min-width: 220px; }
+  .tiles { grid-template-columns: 1fr; }
+  .with-drawer, .compare { grid-template-columns: 1fr; }
+  .sim-drawer { position: static; }
+  .layer { padding: 12px 8px; }
+  .win { max-height: calc(100vh - 24px); }
+}
+@media (max-width: 700px) {
+  .layer { padding: 10px 6px; }
+  .out-arrow { display: none; }
+  .nav-bar { display: flex; }
+}
+
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
+</style>
+</head>
+<body>
+
+<div class="switcher">
+  <div class="sw-row" id="viewBtns"></div>
+  <div class="sw-row" id="designBtns"></div>
+  <div class="sw-row" id="extraBtns"></div>
+</div>
+<p class="desc" id="desc"></p>
+<div class="stage"><div class="frame" id="frame"></div></div>
+
+<script>
+// ================================================================== data (real counts from our bank)
+const BOARDS = [['Pearson Edexcel', 308]];
+const LEVELS = [['Edexcel AS Level', 308]];
+const SUBJECTS = [['Physics (8PH0)', 308]];
+const TOPICS = [
+  { id: 't1', code: '1', name: 'Working as a Physicist', short: 'Working as a Physicist', count: 36, subs: [['SI units', 8], ['Measurement techniques', 7], ['Uncertainties', 9], ['Plotting and analysing graphs', 8], ['Evaluating conclusions', 4]] },
+  { id: 't2', code: '2', name: 'Mechanics', short: 'Mechanics', count: 145, subs: [['Equations of motion', 8], ['Motion graphs', 17], ['Scalars and vectors', 8], ['Adding and resolving vectors', 9], ['Projectile motion', 13], ['Free-body diagrams', 10], ["Newton's first and second laws", 14], ['Moments and centre of gravity', 16], ["Newton's third law", 8], ['Momentum', 13], ['Work and energy', 12], ['Power and efficiency', 17]] },
+  { id: 't3', code: '3', name: 'Electric Circuits', short: 'Electric Circuits', count: 86, subs: [['Current and charge', 6], ['Potential difference and power', 7], ['Series and parallel circuits', 7], ['I–V characteristics', 11], ['Resistivity', 12], ['Drift velocity', 5], ['Potential dividers', 13], ['E.m.f. and internal resistance', 14], ['Thermistors and LDRs', 11]] },
+  { id: 't4', code: '4', name: 'Materials', short: 'Materials', count: 23, subs: [['Density and upthrust', 5], ['Viscosity and terminal velocity', 3], ["Hooke's law", 6], ['Stress, strain and Young modulus', 9]] },
+  { id: 't5', code: '5', name: 'Waves and the Particle Nature of Light', short: 'Waves & Light', count: 18, subs: [['Wave speed and intensity', 2], ['Lenses and images', 4], ['Polarisation', 2], ['Diffraction and interference', 4], ['Photons and the photoelectric effect', 6]] },
+];
+const SEASONS = [['May/June', 212], ['Oct/Nov', 66], ['Specimen', 30]];
+const PAPERS = [['Paper 1', 308]];
+const TYPES = [['MCQ', 80], ['Written', 228]];
+const DIFFS = [['Easy', 95], ['Medium', 156], ['Hard', 57]];
+const YEARS = { all: { label: 'All years', a: 2015, b: 2024, f: 1 }, l5: { label: 'Last 5 years', a: 2020, b: 2024, f: .52 }, l3: { label: 'Last 3 years', a: 2022, b: 2024, f: .31 } };
+
+const QUESTIONS = [
+  { id: 'q1', src: 'Physics · May/June 2024 · Paper 01 · Q1', page: 2, type: 'MCQ', marks: '1 mark', diff: 'Easy', topic: '2. Mechanics', sub: 'Scalars and vectors', text: 'Which of the following quantities is a scalar quantity?', options: [['A', 'energy'], ['B', 'moment of a force'], ['C', 'momentum'], ['D', 'velocity']], correct: 'A' },
+  { id: 'q2', src: 'Physics · May/June 2024 · Paper 01 · Q2', page: 2, type: 'MCQ', marks: '1 mark', diff: 'Medium', topic: '2. Mechanics', sub: 'Momentum', text: 'Two ice skaters, P and Q, are close together and stationary on an ice rink. P pushes Q and they move away from each other.\nThe mass of P is greater than the mass of Q. Which of the following statements is correct?', options: [['A', 'P and Q both move at the same speed.'], ['B', 'P and Q have the same magnitude of momentum.'], ['C', 'P has a greater magnitude of momentum than Q.'], ['D', 'P moves faster than Q.']], correct: 'B' },
+  { id: 'q3', src: 'Physics · May/June 2024 · Paper 01 · Q6', page: 4, type: 'MCQ', marks: '1 mark', diff: 'Medium', topic: '2. Mechanics', sub: 'Projectile motion', text: 'A ball rolls along a table of height 0.83 m. The ball has a horizontal velocity of 1.72 m s⁻¹ as it falls off the edge of the table.\nWhich of the following is an expression for the speed of the ball, in m s⁻¹, as it hits the floor?', options: [['A', '√[(2 × 9.81 × 0.83)² + 1.72²]'], ['B', '(2 × 9.81 × 0.83)² + 1.72²'], ['C', '√[(2 × 9.81 × 0.83) + 1.72²]'], ['D', '(2 × 9.81 × 0.83) + 1.72²']], correct: 'C' },
+  { id: 'q4', src: 'Physics · May/June 2024 · Paper 01 · Q7', page: 5, type: 'MCQ', marks: '1 mark', diff: 'Easy', topic: '1. Working as a Physicist', sub: 'SI units', text: 'Which of the following units is equivalent to the joule?', options: [['A', 'N s'], ['B', 'kg m s⁻²'], ['C', 'W s'], ['D', 'kg m s⁻¹']], correct: 'C' },
+  { id: 'q5', src: 'Physics · May/June 2024 · Paper 01 · Q12(a)', page: 11, type: 'Written', marks: '2 marks', diff: 'Easy', topic: '1. Working as a Physicist', sub: 'Measurement techniques', text: 'A student carried out an experiment to determine the resistivity of a metal alloy, using a wire made of the alloy.\n(a) Describe how the student could have measured the diameter of the wire accurately.', answer: 'Use a micrometer screw gauge (1)\nRepeat the reading at different points along the wire and calculate a mean (1)' },
+  { id: 'q6', src: 'Physics · May/June 2024 · Paper 01 · Q14(a)', page: 14, type: 'Written', marks: '4 marks', diff: 'Medium', topic: '3. Electric Circuits', sub: 'I–V characteristics', text: 'An LED is connected in series with a resistor R and a 6.0 V supply. The current in the circuit is 12.5 mA.\n(a) Use the graph to determine the resistance of R.', answer: 'V(LED) = 0.74 V read from the graph (1)\nUse of V(R) = V(supply) − V(LED) (1)\nUse of V = IR (1)\nR = 420 Ω (1)' },
+];
+const CARDS = [QUESTIONS[0], QUESTIONS[4]];
+const SIMILAR = [
+  { id: 's1', src: 'Physics · Specimen 2015 · Paper 01 · Q3', page: 2, type: 'MCQ', marks: '1 mark', diff: 'Easy', topic: '2. Mechanics', sub: 'Scalars and vectors', text: 'Which of the following is a scalar quantity?', options: [['A', 'displacement'], ['B', 'force'], ['C', 'weight'], ['D', 'work']], correct: 'D' },
+  { id: 's2', src: 'Physics · May/June 2017 · Paper 01 · Q1', page: 2, type: 'MCQ', marks: '1 mark', diff: 'Easy', topic: '2. Mechanics', sub: 'Scalars and vectors', text: 'Which of the following is not a vector quantity?', options: [['A', 'acceleration'], ['B', 'distance'], ['C', 'momentum'], ['D', 'velocity']], correct: 'B' },
+  { id: 's3', src: 'Physics · May/June 2018 · Paper 01 · Q1', page: 2, type: 'MCQ', marks: '1 mark', diff: 'Easy', topic: '1. Working as a Physicist', sub: 'SI units', text: 'All quantities may be expressed in terms of SI base units. Select the row that states the SI base units for the given quantity.', options: [['A', 'charge — C'], ['B', 'charge — A s⁻¹'], ['C', 'power — J s⁻¹'], ['D', 'power — kg m² s⁻³']], correct: 'D' },
+];
+
+// ================================================================== the designs
+const VIEWS = [
+  { id: 'filters', label: 'Filter layouts', n: 11 },
+  { id: 'question', label: 'Question view', n: 5 },
+  { id: 'similar', label: 'Similar questions', n: 5 },
+];
+const FILTER_DESIGNS = [
+  { id: 'accordion', name: '1 · Smart accordion', theme: 'classic', color: '#2447d4', desc: '<b>Smart accordion — Classic Blue.</b> Only ONE section opens at a time and every closed section shows what is picked (e.g. “Mechanics +1”). The panel never grows long.' },
+  { id: 'topbar', name: '2 · Filter bar', theme: 'midnight', color: '#93a2ff', desc: '<b>Filter bar with dropdowns — Midnight (dark).</b> All filters sit in one row above the questions; each opens its own small dropdown. Questions get the full width.' },
+  { id: 'mega', name: '3 · Topic mega-menu', theme: 'teal', color: '#0f6b63', desc: '<b>Topic mega-menu — Exam Teal.</b> “Browse topics” opens every topic and subtopic at once in columns, like a textbook contents page. Other filters are quick chips.' },
+  { id: 'tabs', name: '4 · Tabbed panel', theme: 'notebook', color: '#b93d0c', desc: '<b>Tabbed filter panel — Notebook.</b> The sidebar has 4 tabs: Course · Topic · Exam · Type. Each tab fits on screen; a dot marks tabs with filters set.' },
+  { id: 'rail', name: '5 · Icon rail', theme: 'graphite', color: '#c6f432', desc: '<b>Icon rail + fly-out — Graphite & Lime.</b> A slim icon bar; tap an icon and its filter flies out beside it. Badges show how many are set.' },
+  { id: 'smart', name: '6 · Smart search', theme: 'violet', color: '#6d28d9', desc: '<b>Smart search with filter tags — Violet.</b> One box does everything: typing “mom” suggests the topic “Momentum”. Picked filters become tags inside the box. Try typing “resist”.' },
+  { id: 'chapters', name: '7 · Chapter cards', theme: 'ocean', color: '#0369a1', desc: '<b>Chapter cards — Ocean.</b> Topics are big chapter cards; pick one and its subtopics appear as chips. Year / type / difficulty are one-tap switches.' },
+  { id: 'modal', name: '8 · Banner + filter window', theme: 'coral', color: '#c2412d', desc: '<b>Course banner + filter window — Coral.</b> The course sits in a coloured banner. “All filters” opens one window with every filter at once and a live “Show N questions” button.' },
+  { id: 'today', name: '9 · Today’s app', theme: 'classic', color: '#2447d4', desc: '<b>Today’s app (what is live now) — Classic Blue.</b> Search on top, sidebar with Board · Level · Subject · Topic · Year · Paper · Season · Type · Difficulty, all starting closed.' },
+  { id: 'dock', name: '10 · Floating dock', theme: 'plum', color: '#9b1fa6', desc: '<b>Floating filter dock — Plum.</b> A floating pill bar at the bottom of the screen (thumb-friendly on phones). Tap a filter and a small card pops up above it.' },
+  { id: 'ytabs', name: '11 · Chip tabs', theme: 'slate', color: '#0f172a', desc: '<b>Chip tabs (YouTube style) — Slate.</b> Topics are one row of tabs; the chosen topic’s subtopics are a second row. Everything else hides behind “More filters”.' },
+];
+const QUESTION_DESIGNS = [
+  { id: 'list', name: 'Q1 · Card list (today)', desc: '<b>Card list (today’s app).</b> Questions one under another; scroll to see more.' },
+  { id: 'focus', name: 'Q2 · Focus mode', desc: '<b>Focus mode.</b> One question at a time, big and centred. Arrows beside it (or ← → keys) move to the previous / next question — no scrolling.' },
+  { id: 'split', name: 'Q3 · List + preview', desc: '<b>List + preview (like email).</b> A compact list on the left with coloured dots (green right, red wrong); the chosen question opens on the right. Arrows step through.' },
+  { id: 'tiles', name: 'Q4 · Tile grid', desc: '<b>Tile grid.</b> Short preview tiles in a grid; tap one and it opens in a window with ‹ › arrows to go through all of them.' },
+  { id: 'practice', name: 'Q5 · Practice mode', desc: '<b>Practice / quiz mode.</b> A progress bar and live score; answer, then “Next question”. A score summary at the end.' },
+];
+const SIMILAR_DESIGNS = [
+  { id: 'popup', name: 'S1 · Pop-up window (today)', desc: '<b>Pop-up window (today’s app).</b> Open “Similar questions”, pick one: it opens in a window with big ‹ › arrows outside it and ← → keys.' },
+  { id: 'drawer', name: 'S2 · Side panel', desc: '<b>Side panel.</b> Similar questions sit in a panel beside the question, with number tabs 1 2 3 and ‹ › arrows. Compare without leaving the page.' },
+  { id: 'carousel', name: 'S3 · Carousel', desc: '<b>Carousel under the question.</b> Similar questions slide sideways under the question, with ‹ › arrows and dots.' },
+  { id: 'compare', name: 'S4 · Side-by-side', desc: '<b>Side-by-side compare.</b> The question on the left, a similar one on the right; ‹ › arrows change the right side. Great for spotting the pattern.' },
+  { id: 'sheet', name: 'S5 · Bottom sheet', desc: '<b>Bottom sheet (phone-style).</b> “See similar questions” slides a sheet up from the bottom, with ‹ › arrows and dots.' },
+];
+const Q_THEMES = [['classic', 'Light'], ['midnight', 'Dark'], ['reading', 'Reading']];
+
+// ================================================================== state
+const S = {
+  view: 'filters', fd: 0, qd: 0, sd: 0, qtheme: 'classic', device: 'laptop',
+  board: '', level: '', subject: '',
+  topics: new Set(), subs: new Set(), year: 'all', season: new Set(), paper: new Set(), type: new Set(), diff: new Set(),
+  q: '', picked: {}, answers: {}, added: new Set(),
+  ui: { acc: 'topic', pop: '', mega: '', tab: 'topic', fly: '', sugg: '', chapter: 't2', modal: '', dock: '', ytab: 't2', more: '', simlist: '' },
+  today: new Set(),
+  exp: new Set(['t2']),
+  nav: { sim: 0, tile: 0, q: 0, drw: 0, car: 0, cmp: 0, sheet: 0 },
+  open: { sim: false, tile: false, sheet: false },
+};
+const subKey = (tid, n) => `${tid}|${n}`;
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+const toggle = (set, v) => (set.has(v) ? set.delete(v) : set.add(v));
+const ALL_Q = Object.fromEntries([...QUESTIONS, ...SIMILAR].map((q) => [q.id, q]));
+
+function count() {
+  let base = 308;
+  const subsSel = [];
+  TOPICS.forEach((t) => t.subs.forEach(([n, c]) => { if (S.subs.has(subKey(t.id, n)) && !S.topics.has(t.id)) subsSel.push(c); }));
+  if (S.topics.size || subsSel.length) base = TOPICS.filter((t) => S.topics.has(t.id)).reduce((a, t) => a + t.count, 0) + subsSel.reduce((a, c) => a + c, 0);
+  const share = (list, set) => { const on = list.filter(([n]) => set.has(n)); return on.length ? on.reduce((a, [, c]) => a + c, 0) / 308 : 1; };
+  const f = YEARS[S.year].f * share(SEASONS, S.season) * share(TYPES, S.type) * share(DIFFS, S.diff) * (S.q.trim() ? 0.06 : 1);
+  return Math.max(S.q.trim() ? 1 : 0, Math.round(base * f));
+}
+function activeList() {
+  const a = [];
+  if (S.board) a.push({ label: S.board, rm: 'board' });
+  if (S.level) a.push({ label: S.level, rm: 'level' });
+  if (S.subject) a.push({ label: S.subject, rm: 'subject' });
+  TOPICS.forEach((t) => {
+    if (S.topics.has(t.id)) a.push({ label: `${t.code}. ${t.name}`, rm: `topic:${t.id}` });
+    t.subs.forEach(([n]) => { if (!S.topics.has(t.id) && S.subs.has(subKey(t.id, n))) a.push({ label: n, rm: `sub:${subKey(t.id, n)}` }); });
+  });
+  if (S.year !== 'all') a.push({ label: `${YEARS[S.year].a} – ${YEARS[S.year].b}`, rm: 'year' });
+  [['season', S.season], ['paper', S.paper], ['type', S.type], ['diff', S.diff]].forEach(([k, set]) => set.forEach((v) => a.push({ label: v, rm: `${k}:${v}` })));
+  return a;
+}
+const filterCount = () => activeList().length;
+
+// ================================================================== icons
+const I = {
+  logo: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 7c-2-1.6-5-2.1-8-1.9v12.9c3-.2 6 .3 8 1.9 2-1.6 5-2.1 8-1.9V5.1c-3-.2-6 .3-8 1.9z"/><path d="M12 7v12.9"/><path d="M14.5 13.5l1.6 1.6 3-3.3"/></svg>',
+  search: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>',
+  down: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="m6 9 6 6 6-6"/></svg>',
+  right: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="m9 6 6 6-6 6"/></svg>',
+  prev: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="m15 6-6 6 6 6"/></svg>',
+  next: '<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="m9 6 6 6-6 6"/></svg>',
+  check: '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.6" stroke-linecap="round"><path d="M5 12l5 5 9-10"/></svg>',
+  dash: '<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.6" stroke-linecap="round"><path d="M6 12h12"/></svg>',
+  x: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M6 6l12 12M18 6 6 18"/></svg>',
+  filter: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h16M7 12h10M10 18h4"/></svg>',
+  course: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 10 12 5 2 10l10 5 10-5z"/><path d="M6 12v5c3 2 9 2 12 0v-5"/></svg>',
+  topic: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 5h16M4 12h16M4 19h10"/></svg>',
+  cal: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="3" y="5" width="18" height="16" rx="3"/><path d="M3 10h18M8 3v4M16 3v4"/></svg>',
+  type: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="6" cy="7" r="2"/><path d="M11 7h9M11 17h9"/><circle cx="6" cy="17" r="2"/></svg>',
+  gauge: '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 18a8 8 0 1 1 16 0"/><path d="M12 18l4-6"/></svg>',
+  spark: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.8 4.7L18.5 9l-4.7 1.8L12 15.5l-1.8-4.7L5.5 9l4.7-1.3z"/></svg>',
+  dl: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></svg>',
+  page: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 3h9l4 4v14H6z"/><path d="M9 12h7M9 16h5"/></svg>',
+  sun: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>',
+  moon: '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z"/></svg>',
+};
+
+// ================================================================== shared pieces
+const appbar = (title = 'Practice questions') => `
+  <div class="appbar">
+    <span class="logo">${I.logo}</span><span class="appname">Paper Analyzer</span>
+    <span class="apptitle"><b>${title}</b><span>Real past paper questions with official answers and the exact source of each one.</span></span>
+    ${S.view !== 'filters' ? `<button class="icon-btn" data-act="darkmode" aria-label="Switch light / dark" title="Light / dark">${S.qtheme === 'midnight' ? I.sun : I.moon}</button>` : ''}
+  </div>`;
+const searchBox = (ph = 'Search questions, e.g. resistivity, projectile…') => `
+  <label class="search">${I.search}<input data-act="q" data-focus="q" value="${esc(S.q)}" placeholder="${esc(ph)}" aria-label="Search questions"></label>`;
+const countLine = () => `<span class="count"><b>${count()}</b> questions · ${Math.round(count() * 2.6)} marks</span>`;
+const sortBtn = () => `<button class="btn">Newest first ${I.down}</button>`;
+const activeChips = () => {
+  const a = activeList();
+  if (!a.length) return '';
+  return `<div class="chips">${a.map((c) => `<button class="active-chip" data-act="rm" data-arg="${esc(c.rm)}">${esc(c.label)} ${I.x}</button>`).join('')}${a.length > 1 ? `<button class="btn ghost" style="height:30px" data-act="clear">Clear all</button>` : ''}</div>`;
+};
+const radioList = (kind, list, all) => {
+  const rows = [['', all, list.reduce((s, [, c]) => s + c, 0)], ...list.map(([n, c]) => [n, n, c])];
+  return `<div>${rows.map(([v, l, c]) => `<button class="row-btn" data-act="radio" data-arg="${kind}=${esc(v)}"><span class="radio ${S[kind] === v ? 'on' : ''}"></span>${esc(l)}<span class="n">${c}</span></button>`).join('')}</div>`;
+};
+const courseSelects = (cls = 'sel') => `
+  <select class="${cls}" data-act="select" data-arg="board" aria-label="Board"><option value="">All boards</option>${BOARDS.map(([n]) => `<option ${S.board === n ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select>
+  <select class="${cls}" data-act="select" data-arg="level" aria-label="Level"><option value="">All levels</option>${LEVELS.map(([n]) => `<option ${S.level === n ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select>
+  <select class="${cls}" data-act="select" data-arg="subject" aria-label="Subject"><option value="">All subjects</option>${SUBJECTS.map(([n]) => `<option ${S.subject === n ? 'selected' : ''}>${esc(n)}</option>`).join('')}</select>`;
+const topicState = (t) => (S.topics.has(t.id) ? 'on' : t.subs.some(([n]) => S.subs.has(subKey(t.id, n))) ? 'some' : 'off');
+const box = (st) => `<span class="box ${st !== 'off' ? 'on' : ''}">${st === 'on' ? I.check : st === 'some' ? I.dash : ''}</span>`;
+const subOn = (t, n) => S.topics.has(t.id) || S.subs.has(subKey(t.id, n));
+const topicTree = () => TOPICS.map((t) => `
+  <div>
+    <div style="display:flex;align-items:center">
+      <button class="chev ${S.exp.has(t.id) ? 'open' : ''}" data-act="exp" data-arg="${t.id}" aria-label="Show subtopics">${I.right}</button>
+      <button class="row-btn" data-act="topic" data-arg="${t.id}">${box(topicState(t))}<span style="flex:1;min-width:0">${t.code}. ${esc(t.name)}</span><span class="n">${t.count}</span></button>
+    </div>
+    ${S.exp.has(t.id) ? `<div class="subs">${t.subs.map(([n, c]) => `<button class="row-btn" data-act="sub" data-arg="${t.id}|${esc(n)}">${box(subOn(t, n) ? 'on' : 'off')}<span style="flex:1">${esc(n)}</span><span class="n">${c}</span></button>`).join('')}</div>` : ''}
+  </div>`).join('');
+const subChips = (t) => `<div class="chips">${t.subs.map(([n, c]) => `<button class="chip ${subOn(t, n) ? 'on' : ''}" data-act="sub" data-arg="${t.id}|${esc(n)}">${esc(n)} <span class="n">${c}</span></button>`).join('')}</div>`;
+const chipGroup = (kind, list) => `<div class="chips">${list.map(([n, c]) => `<button class="chip ${S[kind].has(n) ? 'on' : ''}" data-act="multi" data-arg="${kind}=${esc(n)}">${esc(n)} <span class="n">${c}</span></button>`).join('')}</div>`;
+const diffCls = (n) => (n === 'Easy' ? 'easy' : n === 'Medium' ? 'med' : 'hard');
+const diffPills = () => `<div class="chips">${DIFFS.map(([n, c]) => `<button class="chip diff-${diffCls(n)} ${S.diff.has(n) ? 'on' : ''}" data-act="multi" data-arg="diff=${n}">${n} <span class="n">${c}</span></button>`).join('')}</div>`;
+const yearBlock = () => {
+  const y = YEARS[S.year]; const a = ((y.a - 2015) / 9) * 100; const b = ((y.b - 2015) / 9) * 100;
+  return `<div style="display:grid;gap:8px">
+    <b style="font-size:14px">${y.a} – ${y.b}</b>
+    <div class="yr"><span class="fill" style="left:${a}%;width:${b - a}%"></span><span class="th" style="left:${a}%"></span><span class="th" style="left:${b}%"></span></div>
+    <div class="chips">${['l3', 'l5', 'all'].map((k) => `<button class="chip ${S.year === k ? 'on' : ''}" data-act="year" data-arg="${k}">${YEARS[k].label}</button>`).join('')}</div>
+  </div>`;
+};
+const yearSeg = () => `<div class="seg">${['all', 'l5', 'l3'].map((k) => `<button class="${S.year === k ? 'on' : ''}" data-act="year" data-arg="${k}">${YEARS[k].label}</button>`).join('')}</div>`;
+const typeSeg = () => `<div class="seg"><button class="${!S.type.size ? 'on' : ''}" data-act="settype" data-arg="">All types</button>${TYPES.map(([n]) => `<button class="${S.type.size === 1 && S.type.has(n) ? 'on' : ''}" data-act="settype" data-arg="${n}">${n}</button>`).join('')}</div>`;
+const diffSeg = () => `<div class="seg"><button class="${!S.diff.size ? 'on' : ''}" data-act="setdiff" data-arg="">Any level</button>${DIFFS.map(([n]) => `<button class="${S.diff.size === 1 && S.diff.has(n) ? 'on' : ''}" data-act="setdiff" data-arg="${n}">${n}</button>`).join('')}</div>`;
+
+// ---- one question card (everywhere)
+function qCard(q, o = {}) {
+  const p = S.picked[q.id];
+  const added = S.added.has(q.id);
+  const opts = (q.options || []).map(([l, t]) => {
+    const right = p && l === q.correct; const wrong = p === l && l !== q.correct;
+    return `<button class="opt ${right ? 'right' : ''} ${wrong ? 'wrong' : ''} ${p && !right && !wrong ? 'faded' : ''}" data-act="pick" data-arg="${q.id}|${l}" ${p ? 'disabled' : ''}><span class="l">${right ? '✓' : wrong ? '✕' : l}</span>${esc(t)}</button>`;
+  }).join('');
+  const dc = diffCls(q.diff);
+  let similar = '';
+  if (o.similar !== false) {
+    if (o.similar === 'inline') {
+      similar = `<button class="similar" data-act="ui" data-arg="simlist=${q.id}">${I.spark} Similar questions (${SIMILAR.length}) <span style="margin-left:auto">${S.ui.simlist === q.id ? '▲' : '▼'}</span></button>
+        ${S.ui.simlist === q.id ? `<div class="sim-rows">${SIMILAR.map((s, i) => `<button class="sim-row" data-act="simopen" data-arg="${i}"><b>${esc(s.src)}</b><span>${esc(s.topic)} › ${esc(s.sub)} · ${s.type} · ${s.diff}</span></button>`).join('')}</div>` : ''}`;
+    } else if (o.similar === 'sheet') {
+      similar = `<button class="similar" data-act="sheetopen">${I.spark} See ${SIMILAR.length} similar questions</button>`;
+    } else if (o.similar === 'none-btn') {
+      similar = '';
+    } else {
+      similar = `<button class="similar" data-act="simopen" data-arg="0">${I.spark} Similar questions (${SIMILAR.length})</button>`;
+    }
+  }
+  return `<article class="card" ${o.key ? `data-k="${o.key}"` : ''}>
+    <div class="card-h"><b>${esc(q.src)}</b><span class="acts"><button class="mini">${I.page} Page ${q.page}</button><button class="mini">${I.dl} Paper</button><button class="mini out ${added ? 'on' : ''}" data-act="add" data-arg="${q.id}">${added ? '✓ Added' : '+ Add to PDF'}</button></span></div>
+    <div class="card-b">
+      <div class="tags"><span class="tag">${q.type}</span><span class="tag">${q.marks}</span><span class="tag" style="border-color:transparent;background:var(--${dc});color:var(--${dc}-t)">${q.diff}</span></div>
+      <span style="font-size:14px" class="muted"><b style="color:var(--text);font-weight:600">${esc(q.topic)}</b> › ${esc(q.sub)}</span>
+      <p class="qt">${esc(q.text)}</p>
+      ${q.options ? `${p ? '' : '<span class="muted" style="font-size:12px">Choose an answer to check it.</span>'}<div style="display:grid;gap:8px">${opts}</div>
+        ${p ? `<div class="fb ${p === q.correct ? 'ok' : 'no'}"><span>${p === q.correct ? '✓ Correct!' : `✕ Wrong answer. The correct answer is ${q.correct}.`}</span><button data-act="reset" data-arg="${q.id}">Try again</button></div>` : ''}`
+      : `<div><button class="btn ${S.answers[q.id] ? '' : 'primary'}" data-act="ans" data-arg="${q.id}">${S.answers[q.id] ? 'Hide answer' : 'Show answer'}</button></div>${S.answers[q.id] ? `<div class="ms"><b style="color:var(--good);font-size:11px;letter-spacing:.07em">MARK SCHEME</b>\n${esc(q.answer)}</div>` : ''}`}
+      ${similar}
+    </div>
+  </article>`;
+}
+const selBar = () => (S.added.size ? `<div class="sel-bar"><div><span style="margin-right:auto;font-size:14px"><b>${S.added.size}</b> selected</span><button class="btn ghost" data-act="clearsel">Clear</button><button class="btn primary">Download PDF</button></div></div>` : '');
+const results = (lead = '') => `<main class="main">${lead}<div class="toolbar">${countLine()}<button class="btn ghost">✓✓ Select all</button>${sortBtn()}</div>${activeChips()}${CARDS.map((q) => qCard(q)).join('')}</main>`;
+
+// ---- arrows + window used by every design
+const dots = (i, n) => `<span class="dots">${Array.from({ length: n }, (_, k) => `<i class="${k === i ? 'on' : ''}"></i>`).join('')}</span>`;
+const outArrows = (kind, i, n) => `<button class="out-arrow l" data-act="nav" data-arg="${kind}|-1" ${i <= 0 ? 'disabled' : ''} aria-label="Previous">${I.prev}</button><button class="out-arrow r" data-act="nav" data-arg="${kind}|1" ${i >= n - 1 ? 'disabled' : ''} aria-label="Next">${I.next}</button>`;
+const inArrows = (kind, i, n) => `<button class="in-arrow" data-act="nav" data-arg="${kind}|-1" ${i <= 0 ? 'disabled' : ''} aria-label="Previous">${I.prev}</button><button class="in-arrow" data-act="nav" data-arg="${kind}|1" ${i >= n - 1 ? 'disabled' : ''} aria-label="Next">${I.next}</button>`;
+const navBar = (kind, i, n) => `<div class="nav-bar"><button class="btn" data-act="nav" data-arg="${kind}|-1" ${i <= 0 ? 'disabled' : ''}>${I.prev} Previous</button><button class="btn" data-act="nav" data-arg="${kind}|1" ${i >= n - 1 ? 'disabled' : ''}>Next ${I.next}</button></div>`;
+const kbdHint = () => `<span class="kbd-hint muted" style="font-size:12px;margin-left:auto">Use <span class="kbd">←</span> <span class="kbd">→</span> to move</span>`;
+function windowLayer(kind, list, title) {
+  const i = S.nav[kind]; const n = list.length;
+  return `<div class="layer"><button class="dim" data-act="close" aria-label="Close"></button>
+    <div class="win" role="dialog" aria-label="${esc(title)}">
+      ${outArrows(kind, i, n)}
+      <div class="win-h"><b>${esc(title)} ${i + 1} of ${n}</b>${dots(i, n)}${kbdHint()}<button class="x-btn" data-act="close" aria-label="Close">${I.x}</button></div>
+      <div class="win-body">${qCard(list[i], { similar: kind === 'sim' ? false : undefined, key: list[i].id })}</div>
+      ${navBar(kind, i, n)}
+    </div></div>`;
+}
+
+// summary text for closed sections / tabs / pills
+const sum = {
+  course: () => [S.board, S.level, S.subject].filter(Boolean).pop() || 'All',
+  topic: () => { const a = activeList().filter((x) => x.rm.startsWith('topic:') || x.rm.startsWith('sub:')); return a.length ? `${a[0].label.replace(/^\d\. /, '')}${a.length > 1 ? ` +${a.length - 1}` : ''}` : 'All'; },
+  year: () => (S.year === 'all' ? 'All' : `${YEARS[S.year].a}–${YEARS[S.year].b}`),
+  exam: () => { const n = S.season.size + S.paper.size + (S.year !== 'all' ? 1 : 0); return n ? `${n} set` : 'All'; },
+  type: () => { const n = S.type.size + S.diff.size; return n ? [...S.type, ...S.diff].join(', ') : 'All'; },
+};
+const isSet = (k) => sum[k]() !== 'All';
+const courseBody = () => `<span class="label">Board</span>${radioList('board', BOARDS, 'All boards')}<span class="label">Level</span>${radioList('level', LEVELS, 'All levels')}<span class="label">Subject</span>${radioList('subject', SUBJECTS, 'All subjects')}`;
+const examBody = () => `<span class="label">Paper</span>${chipGroup('paper', PAPERS)}<span class="label">Season</span>${chipGroup('season', SEASONS)}`;
+const typeBody = () => `<span class="label">Question type</span>${chipGroup('type', TYPES)}<span class="label">Difficulty</span>${diffPills()}`;
+
+// ================================================================== filter designs
+const RF = {
+  accordion() {
+    const sec = (k, title, body) => `<div class="acc-sec ${S.ui.acc === k ? 'open' : ''}">
+      <button class="acc-h" data-act="ui" data-arg="acc=${k}"><span class="t">${title}</span><span class="s ${isSet(k) ? 'on' : ''}">${esc(sum[k]())}</span>${I.down}</button>
+      ${S.ui.acc === k ? `<div class="acc-b">${body}</div>` : ''}</div>`;
+    return `${appbar()}<div class="body">${searchBox()}
+      <div class="layout">
+        <aside class="side panel" style="position:sticky;top:14px">
+          <div style="display:flex;justify-content:space-between;align-items:center;padding:14px 16px 8px"><b style="display:flex;gap:8px;align-items:center;font-size:14px">${I.filter} Filters</b>${filterCount() ? '<button class="btn ghost" style="height:28px;padding:0 4px;color:var(--primary);font-size:12px;font-weight:600" data-act="clear">Clear all</button>' : ''}</div>
+          <div style="border-top:1px solid var(--border)">
+          ${sec('course', 'Course', courseBody())}${sec('topic', 'Topic', topicTree())}${sec('year', 'Year', yearBlock())}${sec('exam', 'Paper & season', examBody())}${sec('type', 'Type & difficulty', typeBody())}
+          </div>
+        </aside>${results()}
+      </div></div>`;
+  },
+  topbar() {
+    const pills = [['course', 'Course'], ['topic', 'Topic'], ['year', 'Year'], ['exam', 'Season'], ['type', 'Type & level']];
+    const bodies = { course: `<div style="display:grid;gap:10px;width:300px">${courseBody()}</div>`, topic: `<div style="width:min(420px,80vw);max-height:420px;overflow:auto">${topicTree()}</div>`, year: `<div style="width:300px">${yearBlock()}</div>`, exam: `<div style="display:grid;gap:10px;width:300px">${examBody()}</div>`, type: `<div style="display:grid;gap:10px;width:300px">${typeBody()}</div>` };
+    const left = { course: 0, topic: 120, year: 230, exam: 320, type: 420 };
+    const open = S.ui.pop;
+    return `${appbar()}<div class="body">${searchBox()}
+      <div class="fbar"><div class="fpills">
+        ${pills.map(([k, l]) => `<button class="fpill ${isSet(k) ? 'set' : ''} ${open === k ? 'open' : ''}" data-act="ui" data-arg="pop=${k}">${l}${isSet(k) ? `: ${esc(sum[k]())}` : ''} ${I.down}</button>`).join('')}
+        ${filterCount() ? '<button class="btn ghost" data-act="clear">Clear all</button>' : ''}</div>
+        ${open ? `<button class="scrim" data-act="ui" data-arg="pop=" aria-label="Close"></button><div class="pop" style="top:48px;left:${left[open]}px">${bodies[open]}</div>` : ''}
+      </div><div class="layout">${results()}</div></div>`;
+  },
+  mega() {
+    const open = S.ui.mega === 'open';
+    return `${appbar()}<div class="body">
+      <div style="display:flex;gap:10px;flex-wrap:wrap;position:relative">
+        <button class="btn ${open ? 'primary' : ''}" style="height:46px;font-weight:600" data-act="ui" data-arg="mega=open">${I.topic} Browse topics ${I.down}</button>
+        <div style="flex:1 1 280px">${searchBox()}</div>
+        ${open ? `<button class="scrim" data-act="ui" data-arg="mega=" aria-label="Close"></button><div class="pop mega">${TOPICS.map((t) => `<div><h4><button class="row-btn" style="padding:4px;font-weight:700" data-act="topic" data-arg="${t.id}">${box(topicState(t))}${t.code}. ${esc(t.name)}</button></h4>${t.subs.map(([n, c]) => `<button class="row-btn" style="font-size:13px;padding:4px 6px" data-act="sub" data-arg="${t.id}|${esc(n)}">${box(subOn(t, n) ? 'on' : 'off')}<span style="flex:1">${esc(n)}</span><span class="n">${c}</span></button>`).join('')}</div>`).join('')}</div>` : ''}
+      </div>
+      <div class="chips scroll" style="align-items:center"><span class="label" style="margin-right:4px">Quick</span>
+        ${TYPES.map(([n, c]) => `<button class="chip ${S.type.has(n) ? 'on' : ''}" data-act="multi" data-arg="type=${n}">${n} <span class="n">${c}</span></button>`).join('')}
+        ${DIFFS.map(([n, c]) => `<button class="chip diff-${diffCls(n)} ${S.diff.has(n) ? 'on' : ''}" data-act="multi" data-arg="diff=${n}">${n} <span class="n">${c}</span></button>`).join('')}
+        ${['l3', 'l5'].map((k) => `<button class="chip ${S.year === k ? 'on' : ''}" data-act="year" data-arg="${S.year === k ? 'all' : k}">${YEARS[k].label}</button>`).join('')}
+        ${SEASONS.map(([n, c]) => `<button class="chip ${S.season.has(n) ? 'on' : ''}" data-act="multi" data-arg="season=${n}">${n} <span class="n">${c}</span></button>`).join('')}
+      </div><div class="layout">${results()}</div></div>`;
+  },
+  tabs() {
+    const tabs = [['course', 'Course', I.course], ['topic', 'Topic', I.topic], ['exam', 'Exam', I.cal], ['type', 'Type', I.type]];
+    const t = S.ui.tab;
+    const bodies = { course: courseBody(), topic: `<div style="max-height:430px;overflow:auto">${topicTree()}</div>`, exam: `<span class="label">Year</span>${yearBlock()}${examBody()}`, type: typeBody() };
+    return `${appbar()}<div class="body">${searchBox()}
+      <div class="layout">
+        <aside class="side panel" style="position:sticky;top:14px">
+          <div class="tabs">${tabs.map(([k, l, ic]) => `<button class="${t === k ? 'on' : ''}" data-act="ui" data-arg="tab=${k}">${isSet(k) ? '<span class="dot"></span>' : ''}${ic}${l}</button>`).join('')}</div>
+          <div class="tab-body">${bodies[t]}</div>
+          ${filterCount() ? `<div style="padding:0 14px 14px"><button class="btn" style="width:100%;justify-content:center" data-act="clear">Clear all filters (${filterCount()})</button></div>` : ''}
+        </aside>${results()}
+      </div></div>`;
+  },
+  rail() {
+    const items = [['course', 'Course', I.course], ['topic', 'Topic', I.topic], ['year', 'Year', I.cal], ['exam', 'Season', I.cal], ['type', 'Type', I.gauge]];
+    const n = { course: [S.board, S.level, S.subject].filter(Boolean).length, topic: S.topics.size + S.subs.size, year: S.year !== 'all' ? 1 : 0, exam: S.season.size + S.paper.size, type: S.type.size + S.diff.size };
+    const bodies = { course: courseBody(), topic: `<div style="max-height:460px;overflow:auto">${topicTree()}</div>`, year: yearBlock(), exam: examBody(), type: typeBody() };
+    const f = S.ui.fly;
+    return `${appbar()}<div class="body">
+      <div class="layout" style="position:relative">
+        <nav class="rail panel" aria-label="Filters">${items.map(([k, l, ic]) => `<button class="${f === k ? 'on' : ''}" data-act="ui" data-arg="fly=${k}">${n[k] ? `<span class="badge">${n[k]}</span>` : ''}${ic}${l}</button>`).join('')}
+          ${filterCount() ? `<button data-act="clear" title="Clear all">${I.x}Clear</button>` : ''}</nav>
+        ${f ? `<button class="scrim" data-act="ui" data-arg="fly=" aria-label="Close"></button><div class="pop flyout"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px"><b>${items.find((x) => x[0] === f)[1]}</b><button class="x-btn" data-act="ui" data-arg="fly=" aria-label="Close">${I.x}</button></div><div style="display:grid;gap:10px">${bodies[f]}</div></div>` : ''}
+        ${results(searchBox())}
+      </div></div>`;
+  },
+  smart() {
+    const q = S.q.trim().toLowerCase();
+    const tokens = activeList();
+    let sugg = '';
+    if (S.ui.sugg === 'open' || q.length > 0) {
+      const groups = []; const tHits = [];
+      TOPICS.forEach((t) => {
+        if (!q || t.name.toLowerCase().includes(q)) tHits.push(`<button class="it" data-act="topic" data-arg="${t.id}"><span class="k">TOPIC</span>${t.code}. ${esc(t.name)}<span class="n">${t.count}</span></button>`);
+        t.subs.forEach(([nm, c]) => { if (q && nm.toLowerCase().includes(q)) tHits.push(`<button class="it" data-act="sub" data-arg="${t.id}|${esc(nm)}"><span class="k">SUBTOPIC</span>${esc(nm)} <span class="muted" style="font-size:12px">in ${esc(t.short)}</span><span class="n">${c}</span></button>`); });
+      });
+      if (tHits.length) groups.push(`<div class="grp">Topics</div>${tHits.slice(0, 8).join('')}`);
+      const other = [];
+      Object.entries(YEARS).forEach(([k, y]) => { if (k !== 'all' && (!q || y.label.toLowerCase().includes(q) || String(y.a).includes(q) || String(y.b).includes(q))) other.push(`<button class="it" data-act="year" data-arg="${k}"><span class="k">YEAR</span>${y.label} (${y.a}–${y.b})</button>`); });
+      [['type', TYPES, 'TYPE'], ['diff', DIFFS, 'LEVEL'], ['season', SEASONS, 'SEASON']].forEach(([k, list, lbl]) => list.forEach(([nm, c]) => { if (!q || nm.toLowerCase().includes(q)) other.push(`<button class="it" data-act="multi" data-arg="${k}=${nm}"><span class="k">${lbl}</span>${nm}<span class="n">${c}</span></button>`); }));
+      if (other.length) groups.push(`<div class="grp">Filters</div>${other.slice(0, 8).join('')}`);
+      if (q) groups.unshift(`<button class="it" data-act="ui" data-arg="sugg="><span class="k">TEXT</span>Search questions for “${esc(S.q)}”<span class="n">Enter</span></button>`);
+      sugg = `<button class="scrim" data-act="ui" data-arg="sugg=" aria-label="Close"></button><div class="pop sugg">${groups.join('')}</div>`;
+    }
+    return `${appbar()}<div class="body">
+      <div class="smart"><div class="search" style="position:relative;z-index:32">${I.search}
+          ${tokens.map((c) => `<button class="active-chip" data-act="rm" data-arg="${esc(c.rm)}">${esc(c.label)} ${I.x}</button>`).join('')}
+          <input data-act="q" data-focus="q" value="${esc(S.q)}" placeholder="${tokens.length ? 'Add more…' : 'Search or filter — try “resist”, “mechanics”, “mcq”, “2023”…'}" aria-label="Search and filter" data-open="sugg">
+        </div>${sugg}</div>
+      <div class="addf"><span class="label">Add filter</span>
+        ${[['Topic', 'mech'], ['Year', 'last'], ['Type', 'mcq'], ['Difficulty', 'hard'], ['Season', 'may']].map(([l, hint]) => `<button class="chip" data-act="hint" data-arg="${hint}">+ ${l}</button>`).join('')}
+        ${tokens.length ? '<button class="btn ghost" style="height:32px" data-act="clear">Clear all</button>' : ''}
+      </div><div class="layout">${results()}</div></div>`;
+  },
+  chapters() {
+    const ch = TOPICS.find((t) => t.id === S.ui.chapter);
+    return `${appbar()}<div class="body">
+      <div class="crumb muted">${I.course}${courseSelects('')}</div>
+      ${searchBox()}
+      <div class="chapters">${TOPICS.map((t) => `<button class="chapter ${S.ui.chapter === t.id ? 'on' : ''}" data-act="chapter" data-arg="${t.id}"><span class="num">${t.code}</span><span class="nm">${esc(t.short)}</span><span class="bar"><span style="width:${Math.round((t.count / 145) * 100)}%"></span></span><span class="muted" style="font-size:12px">${t.count} questions</span></button>`).join('')}</div>
+      <div style="display:grid;gap:8px"><span class="label">${ch.code}. ${esc(ch.name)} — pick subtopics</span>${subChips(ch)}</div>
+      <div style="display:flex;flex-wrap:wrap;gap:8px">${yearSeg()}${typeSeg()}${diffSeg()}</div>
+      <div class="layout">${results()}</div></div>`;
+  },
+  modal() {
+    const open = S.ui.modal === 'open';
+    return `${appbar()}<div class="body">
+      <div class="banner"><div><h2>${esc(S.subject || 'All subjects')}</h2><p>${esc(S.board || 'All boards')} · ${esc(S.level || 'All levels')}</p></div><div class="sels">${courseSelects('')}</div></div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap"><div style="flex:1 1 280px">${searchBox()}</div><button class="btn" style="height:44px;font-weight:600" data-act="ui" data-arg="modal=open">${I.filter} All filters ${filterCount() ? `<span class="badge">${filterCount()}</span>` : ''}</button></div>
+      <div class="layout">${results()}</div>
+      ${open ? `<div class="layer"><button class="dim" data-act="ui" data-arg="modal=" aria-label="Close"></button>
+      <div class="win" style="width:min(1000px,100%)" role="dialog" aria-label="All filters">
+        <div class="win-h"><b style="font-size:17px">All filters</b><button class="x-btn" data-act="ui" data-arg="modal=" aria-label="Close">${I.x}</button></div>
+        <div class="win-body"><div class="modal-g">
+          <div class="col"><span class="label">Topic</span>${TOPICS.map((t) => `<div><button class="row-btn" style="font-weight:600" data-act="topic" data-arg="${t.id}">${box(topicState(t))}${t.code}. ${esc(t.name)}<span class="n">${t.count}</span></button>${topicState(t) !== 'off' || S.exp.has(t.id) ? `<div style="padding:4px 0 8px 34px">${subChips(t)}</div>` : ''}</div>`).join('')}</div>
+          <div class="col"><span class="label">Year</span>${yearBlock()}${examBody()}</div>
+          <div class="col">${typeBody()}</div>
+        </div></div>
+        <div class="modal-f"><button class="btn ghost" data-act="clear">Clear all</button><button class="btn primary" style="flex:0 1 240px;justify-content:center" data-act="ui" data-arg="modal=">Show ${count()} questions</button></div>
+      </div></div>` : ''}
+      </div>`;
+  },
+  today() {
+    const sec = (k, title, body, n) => `<div class="today-sec ${S.today.has(k) ? 'open' : ''}"><button data-act="today" data-arg="${k}"><span style="display:flex;gap:8px;align-items:center">${title}${n ? `<span class="badge" style="height:16px;min-width:16px;font-size:10px">${n}</span>` : ''}</span>${I.right}</button>${S.today.has(k) ? `<div>${body}</div>` : ''}</div>`;
+    return `${appbar()}<div class="body">${searchBox()}
+      <div class="layout">
+        <aside class="side panel" style="position:sticky;top:14px">
+          <div style="display:flex;justify-content:space-between;align-items:center;padding:14px 16px 10px"><b style="display:flex;gap:8px;align-items:center;font-size:14px">${I.filter} Filters</b>${filterCount() ? '<button class="btn ghost" style="height:28px;padding:0 4px;color:var(--primary);font-size:12px;font-weight:600" data-act="clear">Clear all</button>' : ''}</div>
+          ${sec('board', 'Board', radioList('board', BOARDS, 'All boards'), S.board ? 1 : 0)}
+          ${sec('level', 'Level', radioList('level', LEVELS, 'All levels'), S.level ? 1 : 0)}
+          ${sec('subject', 'Subject', radioList('subject', SUBJECTS, 'All subjects'), S.subject ? 1 : 0)}
+          ${sec('topic', 'Topic', topicTree(), S.topics.size + S.subs.size)}
+          ${sec('year', 'Year', yearBlock(), S.year !== 'all' ? 1 : 0)}
+          ${sec('paper', 'Paper', chipGroup('paper', PAPERS), S.paper.size)}
+          ${sec('season', 'Season', chipGroup('season', SEASONS), S.season.size)}
+          ${sec('qtype', 'Question type', chipGroup('type', TYPES), S.type.size)}
+          ${sec('diff', 'Difficulty', diffPills(), S.diff.size)}
+          <div style="height:6px"></div>
+        </aside>${results()}
+      </div></div>`;
+  },
+  dock() {
+    const items = [['course', 'Course', I.course, [S.board, S.level, S.subject].filter(Boolean).length], ['topic', 'Topic', I.topic, S.topics.size + S.subs.size], ['year', 'Year', I.cal, S.year !== 'all' ? 1 : 0], ['exam', 'Season', I.cal, S.season.size + S.paper.size], ['type', 'Type', I.gauge, S.type.size + S.diff.size]];
+    const bodies = { course: courseBody(), topic: `<div style="max-height:360px;overflow:auto">${topicTree()}</div>`, year: yearBlock(), exam: examBody(), type: typeBody() };
+    const d = S.ui.dock;
+    return `${appbar()}<div class="body">${searchBox()}<div class="layout">${results()}</div></div>
+      ${d ? `<div class="dock-sheet panel" style="padding:14px;display:grid;gap:10px"><div style="display:flex;align-items:center"><b>${items.find((x) => x[0] === d)[1]}</b><button class="x-btn" data-act="ui" data-arg="dock=" aria-label="Close">${I.x}</button></div>${bodies[d]}</div>` : ''}
+      <div class="dock"><div>${items.map(([k, l, ic, n]) => `<button class="${d === k ? 'on' : ''}" data-act="ui" data-arg="dock=${k}">${ic}${l}${n ? `<span class="badge">${n}</span>` : ''}</button>`).join('')}${filterCount() ? `<button data-act="clear">${I.x} Clear</button>` : ''}</div></div>`;
+  },
+  ytabs() {
+    const t = TOPICS.find((x) => x.id === S.ui.ytab);
+    const more = S.ui.more === 'open';
+    return `${appbar()}<div class="body">
+      <div style="display:flex;gap:10px;flex-wrap:wrap"><div style="flex:1 1 280px">${searchBox()}</div><button class="btn ${more ? 'primary' : ''}" style="height:44px" data-act="ui" data-arg="more=open">${I.filter} More filters ${filterCount() ? `<span class="badge">${filterCount()}</span>` : ''}</button></div>
+      <div class="ytabs"><button class="ytab ${!S.topics.size && !S.subs.size && S.ui.ytab === 'all' ? 'on' : ''}" data-act="ytab" data-arg="all">All topics</button>${TOPICS.map((x) => `<button class="ytab ${S.ui.ytab === x.id ? 'on' : ''}" data-act="ytab" data-arg="${x.id}">${x.code}. ${esc(x.short)}</button>`).join('')}</div>
+      ${t ? `<div class="ysub">${t.subs.map(([n, c]) => `<button class="chip ${subOn(t, n) ? 'on' : ''}" data-act="sub" data-arg="${t.id}|${esc(n)}" style="flex:none">${esc(n)} <span class="n">${c}</span></button>`).join('')}</div>` : ''}
+      ${more ? `<div class="panel" style="padding:16px;display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px;animation:drop .2s ease"><div class="col">${courseBody()}</div><div class="col"><span class="label">Year</span>${yearBlock()}</div><div class="col">${examBody()}</div><div class="col">${typeBody()}</div></div>` : ''}
+      <div class="layout">${results()}</div></div>`;
+  },
+};
+
+// ================================================================== question-view designs (5 ways × 3 themes)
+const statusOf = (q) => { const p = S.picked[q.id]; return !p ? '' : p === q.correct ? 'ok' : 'no'; };
+const RQ = {
+  list() {
+    return `${appbar()}<div class="body">${searchBox()}<div class="toolbar"><span class="count"><b>${QUESTIONS.length}</b> questions · Mechanics mix</span>${sortBtn()}</div>${QUESTIONS.map((q) => qCard(q)).join('')}</div>`;
+  },
+  focus() {
+    const i = Math.min(S.nav.q, QUESTIONS.length - 1); const n = QUESTIONS.length;
+    return `${appbar()}<div class="body">
+      <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;max-width:780px;width:100%;margin:0 auto"><b style="font-size:15px">Question ${i + 1} of ${n}</b>${dots(i, n)}${kbdHint()}</div>
+      <div class="progress" style="max-width:780px;width:100%;margin:0 auto"><span style="width:${((i + 1) / n) * 100}%"></span></div>
+      <div class="focus-stage">${outArrows('q', i, n)}${qCard(QUESTIONS[i], { key: QUESTIONS[i].id })}</div>
+      <div style="max-width:780px;width:100%;margin:0 auto">${navBar('q', i, n)}</div>
+    </div>`;
+  },
+  split() {
+    const i = Math.min(S.nav.q, QUESTIONS.length - 1); const n = QUESTIONS.length;
+    return `${appbar()}<div class="body"><div class="split">
+      <div class="panel"><div style="padding:12px 14px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between"><b style="font-size:14px">${n} questions</b><span class="muted" style="font-size:12px">${QUESTIONS.filter((q) => statusOf(q) === 'ok').length} right · ${QUESTIONS.filter((q) => statusOf(q) === 'no').length} wrong</span></div>
+        <div class="qlist">${QUESTIONS.map((q, k) => `<button class="qrow ${k === i ? 'on' : ''}" data-act="goto" data-arg="q|${k}"><span class="st ${statusOf(q)}"></span><span style="min-width:0"><b>${esc(q.src.replace('Physics · ', ''))}</b><small>${esc(q.sub)} · ${esc(q.text)}</small></span><span class="tag">${q.type}</span></button>`).join('')}</div></div>
+      <div style="display:grid;gap:10px"><div style="display:flex;align-items:center;gap:8px">${inArrows('q', i, n)}<b style="font-size:14px">Question ${i + 1} of ${n}</b>${kbdHint()}</div>${qCard(QUESTIONS[i], { key: QUESTIONS[i].id })}</div>
+    </div></div>`;
+  },
+  tiles() {
+    return `${appbar()}<div class="body">${searchBox()}<div class="toolbar"><span class="count"><b>${QUESTIONS.length}</b> questions · tap one to open</span>${sortBtn()}</div>
+      <div class="tiles">${QUESTIONS.map((q, k) => { const dc = diffCls(q.diff); const st = statusOf(q); return `<button class="tile" data-act="tileopen" data-arg="${k}">
+        <span class="tags"><span class="tag">${q.type}</span><span class="tag">${q.marks}</span><span class="tag" style="border-color:transparent;background:var(--${dc});color:var(--${dc}-t)">${q.diff}</span>${st ? `<span class="tag" style="border-color:transparent;background:var(--${st === 'ok' ? 'good' : 'bad'}-soft);color:var(--${st === 'ok' ? 'good' : 'bad'})">${st === 'ok' ? '✓ Right' : '✕ Wrong'}</span>` : ''}</span>
+        <b style="font-size:13.5px">${esc(q.src.replace('Physics · ', ''))}</b>
+        <span class="ex">${esc(q.text)}</span>
+        <span class="ft"><span>${esc(q.sub)}</span><span>Open →</span></span></button>`; }).join('')}</div>
+      ${S.open.tile ? windowLayer('tile', QUESTIONS, 'Question') : ''}</div>`;
+  },
+  practice() {
+    const n = QUESTIONS.length; const i = S.nav.q;
+    const ok = QUESTIONS.filter((q) => statusOf(q) === 'ok').length; const no = QUESTIONS.filter((q) => statusOf(q) === 'no').length;
+    const done = QUESTIONS.filter((q) => (q.options ? S.picked[q.id] : S.answers[q.id])).length;
+    if (i >= n) {
+      return `${appbar('Practice')}<div class="body"><div class="panel summary" style="max-width:640px;margin:20px auto;width:100%">
+        <span class="label">Practice finished</span><span class="big">${ok}/${QUESTIONS.filter((q) => q.options).length}</span><b style="font-size:18px">MCQs correct</b>
+        <div class="score"><span class="ok">✓ ${ok} correct</span><span class="no">✕ ${no} wrong</span><span class="left">${n - done} skipped</span></div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:center"><button class="btn" data-act="goto" data-arg="q|0">Review answers</button><button class="btn primary" data-act="restart">Practise again</button></div></div></div>`;
+    }
+    const q = QUESTIONS[i]; const answered = q.options ? !!S.picked[q.id] : !!S.answers[q.id];
+    return `${appbar('Practice')}<div class="body">
+      <div style="max-width:780px;width:100%;margin:0 auto;display:grid;gap:10px">
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap"><b style="font-size:15px">Question ${i + 1} of ${n}</b><div class="score" style="margin-left:auto"><span class="ok">✓ ${ok}</span><span class="no">✕ ${no}</span></div></div>
+        <div class="progress"><span style="width:${(done / n) * 100}%"></span></div>
+      </div>
+      <div class="focus-stage">${outArrows('q', i, n + 1)}${qCard(q, { similar: false, key: q.id })}</div>
+      <div style="max-width:780px;width:100%;margin:0 auto;display:flex;gap:8px;justify-content:space-between">
+        <button class="btn" data-act="nav" data-arg="q|-1" ${i === 0 ? 'disabled' : ''}>${I.prev} Previous</button>
+        <button class="btn ${answered ? 'primary' : ''}" data-act="nav" data-arg="q|1">${i === n - 1 ? 'Finish' : answered ? 'Next question' : 'Skip'} ${I.next}</button>
+      </div>
+    </div>`;
+  },
+};
+
+// ================================================================== similar-question designs
+const RS = {
+  popup() {
+    return `${appbar()}<div class="body"><div style="max-width:820px;width:100%;margin:0 auto;display:grid;gap:12px">
+      <span class="muted" style="font-size:13px">Open “Similar questions” below, then pick one ↓</span>
+      ${qCard(QUESTIONS[0], { similar: 'inline' })}</div>
+      ${S.open.sim ? windowLayer('sim', SIMILAR, 'Similar question') : ''}</div>`;
+  },
+  drawer() {
+    const i = S.nav.drw; const n = SIMILAR.length;
+    return `${appbar()}<div class="body"><div class="with-drawer">
+      ${qCard(QUESTIONS[0], { similar: false })}
+      <aside class="panel sim-drawer">
+        <div class="head">${I.spark}<b style="font-size:14px">Similar questions</b><span style="margin-left:auto;display:flex;gap:6px">${inArrows('drw', i, n)}</span></div>
+        <div class="numtabs">${SIMILAR.map((_, k) => `<button class="${k === i ? 'on' : ''}" data-act="goto" data-arg="drw|${k}">${k + 1}</button>`).join('')}<span class="muted" style="font-size:12px;margin-left:auto;align-self:center">${i + 1} of ${n}</span></div>
+        <div style="padding-top:10px">${qCard(SIMILAR[i], { similar: false, key: SIMILAR[i].id })}</div>
+      </aside></div></div>`;
+  },
+  carousel() {
+    const i = S.nav.car; const n = SIMILAR.length;
+    return `${appbar()}<div class="body"><div style="max-width:860px;width:100%;margin:0 auto;display:grid;gap:16px">
+      ${qCard(QUESTIONS[0], { similar: false })}
+      <div class="car-head">${I.spark}<b>Similar questions</b><span class="muted" style="font-size:13px">${i + 1} of ${n}</span>${dots(i, n)}<span style="margin-left:auto;display:flex;gap:6px">${inArrows('car', i, n)}</span></div>
+      <div class="carousel">${outArrows('car', i, n)}<div class="car-track"><div class="car-inner" style="transform:translateX(-${i * 100}%)">${SIMILAR.map((s) => `<div>${qCard(s, { similar: false })}</div>`).join('')}</div></div></div>
+    </div></div>`;
+  },
+  compare() {
+    const i = S.nav.cmp; const n = SIMILAR.length;
+    return `${appbar()}<div class="body"><div class="compare">
+      <div><div class="colh"><span class="badge" style="background:var(--surface2);color:var(--text)">This question</span></div>${qCard(QUESTIONS[0], { similar: false })}</div>
+      <div><div class="colh"><span class="badge">Similar ${i + 1} of ${n}</span>${dots(i, n)}<span style="margin-left:auto;display:flex;gap:6px">${inArrows('cmp', i, n)}</span></div>${qCard(SIMILAR[i], { similar: false, key: SIMILAR[i].id })}</div>
+    </div></div>`;
+  },
+  sheet() {
+    const i = S.nav.sheet; const n = SIMILAR.length;
+    return `${appbar()}<div class="body"><div style="max-width:820px;width:100%;margin:0 auto">${qCard(QUESTIONS[0], { similar: 'sheet' })}</div></div>
+      ${S.open.sheet ? `<div class="layer" style="padding:0"><button class="dim" data-act="close" aria-label="Close"></button></div>
+      <div class="sheet" role="dialog" aria-label="Similar questions"><div class="handle"></div>
+        <div class="win-h" style="border-bottom:1px solid var(--border)">${I.spark}<b>Similar ${i + 1} of ${n}</b>${dots(i, n)}<span style="margin-left:auto;display:flex;gap:6px">${inArrows('sheet', i, n)}</span><button class="x-btn" style="margin-left:4px" data-act="close" aria-label="Close">${I.x}</button></div>
+        <div class="win-body">${qCard(SIMILAR[i], { similar: false, key: SIMILAR[i].id })}</div>
+      </div>` : ''}`;
+  },
+};
+
+// ================================================================== render + events
+const frame = document.getElementById('frame');
+const current = () => (S.view === 'filters' ? FILTER_DESIGNS[S.fd] : S.view === 'question' ? QUESTION_DESIGNS[S.qd] : SIMILAR_DESIGNS[S.sd]);
+function render() {
+  const d = current();
+  const f = document.activeElement?.dataset?.focus;
+  const caret = f ? document.activeElement.selectionStart : null;
+  frame.dataset.theme = S.view === 'filters' ? d.theme : S.qtheme;
+  frame.className = `frame ${S.device === 'phone' ? 'phone' : ''}`;
+  let html;
+  if (S.view === 'filters') html = RF[d.id]() + selBar() + (S.open.sim ? windowLayer('sim', SIMILAR, 'Similar question') : '');
+  else if (S.view === 'question') html = RQ[d.id]() + (S.open.sim ? windowLayer('sim', SIMILAR, 'Similar question') : '');
+  else html = RS[d.id]();
+  frame.innerHTML = html;
+
+  document.getElementById('viewBtns').innerHTML = `<span class="sw-label">Show</span>` + VIEWS.map((v) => `<button class="sw-btn view" data-act="view" data-arg="${v.id}" aria-pressed="${S.view === v.id}">${v.label} (${v.n})</button>`).join('');
+  const list = S.view === 'filters' ? FILTER_DESIGNS : S.view === 'question' ? QUESTION_DESIGNS : SIMILAR_DESIGNS;
+  const idx = S.view === 'filters' ? S.fd : S.view === 'question' ? S.qd : S.sd;
+  document.getElementById('designBtns').innerHTML = `<span class="sw-label">Design</span>` + list.map((x, i) => `<button class="sw-btn" data-act="design" data-arg="${i}" aria-pressed="${i === idx}">${x.color ? `<span class="sw-dot" style="background:${x.color}"></span>` : ''}${x.name}</button>`).join('');
+  document.getElementById('extraBtns').innerHTML =
+    (S.view !== 'filters' ? `<span class="sw-label">Theme</span>${Q_THEMES.map(([k, l]) => `<button class="sw-btn" data-act="qtheme" data-arg="${k}" aria-pressed="${S.qtheme === k}">${l}</button>`).join('')}<span class="sw-sep"></span>` : '') +
+    `<span class="sw-label">Device</span>${[['laptop', 'Laptop'], ['phone', 'Phone']].map(([k, l]) => `<button class="sw-btn" data-act="device" data-arg="${k}" aria-pressed="${S.device === k}">${l}</button>`).join('')}`;
+  document.getElementById('desc').innerHTML = d.desc + ' <span style="color:#6a707c">Everything is clickable. In every design, “Similar questions” and the ‹ › arrows (or ← → keys) step through questions.</span>';
+  if (f) { const el = frame.querySelector(`[data-focus="${f}"]`); if (el) { el.focus(); if (caret != null) el.setSelectionRange(caret, caret); } }
+}
+
+function clearAll() {
+  S.board = S.level = S.subject = ''; S.topics.clear(); S.subs.clear(); S.year = 'all';
+  S.season.clear(); S.paper.clear(); S.type.clear(); S.diff.clear();
+}
+function closeAll() {
+  S.open.sim = S.open.tile = S.open.sheet = false;
+  S.ui.pop = S.ui.fly = S.ui.mega = S.ui.modal = S.ui.sugg = S.ui.dock = S.ui.more = '';
+}
+// how many steps each arrow kind has (practice mode has one extra step: the summary)
+const total = (k) => (k === 'q' ? QUESTIONS.length + (S.view === 'question' && QUESTION_DESIGNS[S.qd].id === 'practice' ? 1 : 0) : k === 'tile' ? QUESTIONS.length : SIMILAR.length);
+function move(k, d) { S.nav[k] = Math.max(0, Math.min(total(k) - 1, S.nav[k] + d)); }
+// which list the ← → keys move right now
+function activeNav() {
+  if (S.open.sim) return 'sim';
+  if (S.open.tile) return 'tile';
+  if (S.open.sheet) return 'sheet';
+  if (S.view === 'question') return ['focus', 'split', 'practice'].includes(QUESTION_DESIGNS[S.qd].id) ? 'q' : null;
+  if (S.view === 'similar') return { drawer: 'drw', carousel: 'car', compare: 'cmp' }[SIMILAR_DESIGNS[S.sd].id] || null;
+  return null;
+}
+
+function act(a, arg) {
+  switch (a) {
+    case 'view': S.view = arg; closeAll(); window.scrollTo({ top: 0 }); break;
+    case 'design': closeAll(); if (S.view === 'filters') S.fd = Number(arg); else if (S.view === 'question') { S.qd = Number(arg); S.nav.q = 0; } else S.sd = Number(arg); window.scrollTo({ top: 0 }); break;
+    case 'device': S.device = arg; break;
+    case 'qtheme': S.qtheme = arg; break;
+    case 'darkmode': S.qtheme = S.qtheme === 'midnight' ? 'classic' : 'midnight'; break;
+    case 'radio': { const [k, v] = arg.split('='); S[k] = v; if (k === 'board') { S.level = S.subject = ''; } if (k === 'subject' && v) { S.board = BOARDS[0][0]; S.level = LEVELS[0][0]; } break; }
+    case 'topic': { const had = S.topics.has(arg); TOPICS.find((t) => t.id === arg).subs.forEach(([n]) => S.subs.delete(subKey(arg, n))); had ? S.topics.delete(arg) : S.topics.add(arg); break; }
+    case 'sub': {
+      const i = arg.indexOf('|'); const tid = arg.slice(0, i); const n = arg.slice(i + 1); const t = TOPICS.find((x) => x.id === tid);
+      if (S.topics.has(tid)) { S.topics.delete(tid); t.subs.forEach(([m]) => { if (m !== n) S.subs.add(subKey(tid, m)); }); }
+      else toggle(S.subs, subKey(tid, n));
+      if (t.subs.every(([m]) => S.subs.has(subKey(tid, m)))) { t.subs.forEach(([m]) => S.subs.delete(subKey(tid, m))); S.topics.add(tid); }
+      break;
+    }
+    case 'exp': toggle(S.exp, arg); break;
+    case 'today': toggle(S.today, arg); break;
+    case 'year': S.year = arg; break;
+    case 'multi': { const [k, v] = arg.split('='); toggle(S[k], v); break; }
+    case 'settype': S.type.clear(); if (arg) S.type.add(arg); break;
+    case 'setdiff': S.diff.clear(); if (arg) S.diff.add(arg); break;
+    case 'chapter': S.ui.chapter = arg; break;
+    case 'ytab': S.ui.ytab = arg; break;
+    case 'clear': clearAll(); break;
+    case 'rm': {
+      if (['board', 'level', 'subject'].includes(arg)) S[arg] = '';
+      else if (arg === 'year') S.year = 'all';
+      else { const i = arg.indexOf(':'); const k = arg.slice(0, i); const v = arg.slice(i + 1); if (k === 'topic') S.topics.delete(v); else if (k === 'sub') S.subs.delete(v); else S[k].delete(v); }
+      break;
+    }
+    case 'ui': { const [k, v] = arg.split('='); S.ui[k] = S.ui[k] === v ? '' : v; break; }
+    case 'hint': S.q = arg; S.ui.sugg = 'open'; setTimeout(() => frame.querySelector('[data-focus="q"]')?.focus(), 0); break;
+    case 'pick': { const [id, l] = arg.split('|'); if (!S.picked[id]) S.picked[id] = l; break; }
+    case 'reset': delete S.picked[arg]; break;
+    case 'ans': S.answers[arg] = !S.answers[arg]; break;
+    case 'add': toggle(S.added, arg); break;
+    case 'clearsel': S.added.clear(); break;
+    case 'simopen': S.nav.sim = Number(arg) || 0; S.open.sim = true; break;
+    case 'tileopen': S.nav.tile = Number(arg); S.open.tile = true; break;
+    case 'sheetopen': S.nav.sheet = 0; S.open.sheet = true; break;
+    case 'close': S.open.sim = S.open.tile = S.open.sheet = false; break;
+    case 'nav': { const [k, d] = arg.split('|'); move(k, Number(d)); break; }
+    case 'goto': { const [k, v] = arg.split('|'); S.nav[k] = Number(v); break; }
+    case 'restart': QUESTIONS.forEach((q) => { delete S.picked[q.id]; delete S.answers[q.id]; }); S.nav.q = 0; break;
+    default: return;
+  }
+  if (S.view === 'filters' && FILTER_DESIGNS[S.fd].id === 'smart' && ['topic', 'sub', 'year', 'multi'].includes(a)) { S.q = ''; S.ui.sugg = ''; }
+  render();
+}
+
+document.addEventListener('click', (e) => {
+  const el = e.target.closest('[data-act]');
+  if (!el || el.tagName === 'SELECT' || el.tagName === 'INPUT') return;
+  act(el.dataset.act, el.dataset.arg ?? '');
+});
+document.addEventListener('change', (e) => {
+  const el = e.target;
+  if (el.dataset?.act === 'select') { const k = el.dataset.arg; S[k] = el.value; if (k === 'board') { S.level = S.subject = ''; } if (k === 'subject' && el.value) { S.board = BOARDS[0][0]; S.level = LEVELS[0][0]; } render(); }
+});
+document.addEventListener('input', (e) => { if (e.target.dataset?.act === 'q') { S.q = e.target.value; render(); } });
+document.addEventListener('focusin', (e) => { if (e.target.dataset?.open === 'sugg' && S.ui.sugg !== 'open') { S.ui.sugg = 'open'; render(); } });
+document.addEventListener('keydown', (e) => {
+  const typing = ['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName);
+  if (e.key === 'Escape') { closeAll(); render(); return; }
+  if (typing || e.altKey || e.ctrlKey || e.metaKey) return;
+  if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+    const k = activeNav();
+    if (k) { e.preventDefault(); move(k, e.key === 'ArrowLeft' ? -1 : 1); render(); }
+  }
+});
+render();
+</script>
+</body>
+</html>

@@ -1,4 +1,5 @@
 import { NestFactory } from '@nestjs/core';
+import compression from 'compression';
 import { ConfigService } from '@nestjs/config';
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import { AppModule } from './app.module.js';
@@ -13,6 +14,8 @@ async function bootstrap() {
   await storage.init();
 
   app.setGlobalPrefix('api');
+  // gzip JSON/text (the question bank shrinks ~85%); images and PDFs are already compressed and are skipped.
+  app.use(compression());
   app.enableCors({ origin: config.get('WEB_ORIGIN', { infer: true }) });
   // Phase 0: page images and cropped reference images served straight from local disk.
   app.useStaticAssets(storage.root, { prefix: '/files', maxAge: '7d', dotfiles: 'deny' });

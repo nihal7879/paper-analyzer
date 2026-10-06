@@ -56,7 +56,7 @@ where `<slug>` = `<subjectCode>_<seasonCode><yy>_<paperCode>` e.g. `8PH0_s16_01`
 | `text` | Faithful copy of the question part. If parts share a stem (text before part (a)), put the stem at the start of the FIRST part only. Do **not** include answer lines, dotted lines, "(Total for Question X = N marks)" or the mark in brackets. Use LaTeX for ALL maths, symbols and units: `$v = u + at$`, `$4.0\,\text{m s}^{-1}$`, `$\Omega$`, `$\times 10^{-3}$`. Tables can be Markdown tables. |
 | `options` | MCQ only: `[{ "label": "A", "text": "..." }, ...]` with LaTeX. Otherwise `[]`. Don't repeat options in `text`. |
 | `topicCode` | Choose ONLY from the topic list given in your task. |
-| `subtopic` | Short, specific, e.g. `Momentum and impulse`, `Resistivity`, `Young modulus`. |
+| `subtopic` | Copy the matching **syllabus subtopic exactly** (the `topics` table, `parent_id` = the topic; e.g. 8PH0 `2.5 Projectile motion`, `3.5 Resistivity`). Matching names are linked automatically (`questions.subtopic_id`) and show in the student topic tree. Only if none fits: a short, specific name. |
 | `difficulty` | `EASY` recall / one step, `MEDIUM` 2–3 steps, `HARD` multi-step / unfamiliar context / extended answer. |
 | `keywords` | 5–10 lowercase concept keywords a student would search for. |
 | `page`, `pages` | **PDF page index** (1 = first page of the PDF file), not the printed page number. |

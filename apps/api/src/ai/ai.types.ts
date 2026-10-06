@@ -72,7 +72,7 @@ export interface PageContext {
   subjectName: string;
   subjectCode: string;
   componentName: string | null;
-  topics: { code: string; name: string }[];
+  topics: { code: string; name: string; subtopics?: { code: string; name: string }[] }[];
 }
 
 /** Swap implementations via AI_PROVIDER in .env. */
