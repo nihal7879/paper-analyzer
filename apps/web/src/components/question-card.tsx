@@ -114,9 +114,15 @@ export const QuestionCard = memo(function QuestionCard({
           <MathText className="text-base">{q.text}</MathText>
         </div>
 
-        {q.images.map((img, i) => (
-          <QuestionImage key={`${img.page}-${i}`} image={img} paperId={meta.id} alt={`Figure ${i + 1} for question ${q.number}`} />
-        ))}
+        {/* Figures: on laptops two share a row (left-aligned, wrapping when too wide).
+            MCQ figures stay one under another, so the A–D answer diagram sits just above the options. */}
+        {q.images.length > 0 && (
+          <div className={cn("grid gap-3", q.images.length > 1 && q.options.length === 0 && "lg:flex lg:flex-wrap lg:items-start")}>
+            {q.images.map((img, i) => (
+              <QuestionImage key={`${img.page}-${i}`} image={img} paperId={meta.id} alt={`Figure ${i + 1} for question ${q.number}`} />
+            ))}
+          </div>
+        )}
 
         {/* MCQ: click an option to check it */}
         {q.options.length > 0 && (

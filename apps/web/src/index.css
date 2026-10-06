@@ -333,8 +333,16 @@ html {
   grid-template-rows: 0fr;
   opacity: 0;
   transition:
-    grid-template-rows 240ms cubic-bezier(0.2, 0.8, 0.2, 1),
-    opacity 200ms ease;
+    grid-template-rows 280ms cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 220ms ease;
+}
+/* the rows inside drift down a touch as they open */
+.collapsible > * > * {
+  transform: translateY(-4px);
+  transition: transform 280ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.collapsible[data-open="true"] > * > * {
+  transform: none;
 }
 .collapsible[data-open="true"] {
   grid-template-rows: 1fr;
@@ -541,3 +549,41 @@ html {
 .dual-range input::-webkit-slider-thumb { margin-top: 3px; } /* (28px track - 22px thumb) / 2: centred on the line */
 .dual-range input:focus,
 .dual-range input:focus-visible { outline: none; }
+/* question figures: printed-page size (set per figure), smaller on laptops */
+.fig-size {
+  width: min(100%, var(--fig-w-sm));
+}
+@media (min-width: 64rem) {
+  .fig-size {
+    width: min(100%, var(--fig-w-lg));
+  }
+}
+
+/* upload progress: moving shine on the bar, tick pops in when a step finishes */
+@keyframes shine {
+  from { background-position: 200% 0; }
+  to { background-position: -200% 0; }
+}
+.progress-shine {
+  background-image: linear-gradient(90deg, transparent 0%, rgb(255 255 255 / 0.35) 50%, transparent 100%);
+  background-size: 50% 100%;
+  background-repeat: no-repeat;
+  animation: shine 1.6s linear infinite;
+}
+@keyframes step-pop {
+  0% { transform: scale(0.3); opacity: 0; }
+  70% { transform: scale(1.15); opacity: 1; }
+  100% { transform: scale(1); }
+}
+.step-pop { animation: step-pop 380ms cubic-bezier(0.34, 1.56, 0.64, 1) both; }
+@media (prefers-reduced-motion: reduce) {
+  .progress-shine, .step-pop { animation: none; }
+}
+
+/* year slider: settle smoothly onto the year after letting go (no lag while dragging) */
+.dual-range-fill {
+  transition: left 180ms ease-out, right 180ms ease-out;
+}
+.dual-range[data-dragging] .dual-range-fill {
+  transition: none;
+}

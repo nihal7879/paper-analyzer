@@ -603,13 +603,16 @@ function YearRange({
   const committed: [number, number] = [Math.max(min, from ?? min), Math.min(max, to ?? max)];
   // Local value while dragging; the list only re-filters when the thumb is released.
   const [draft, setDraft] = useState<[number, number] | null>(null);
-  const value = draft ?? committed;
+  // `pos`: exact thumb positions while dragging; `value`: the whole years they stand for.
+  const pos = draft ?? committed;
+  const value: [number, number] = [Math.round(pos[0]), Math.round(pos[1])];
   if (!bounds) return <p className="px-2 text-xs text-muted-foreground">Nothing to filter yet</p>;
 
   const set = (a: number, b: number) => {
     setDraft(null);
     update({ yearFrom: a <= min ? null : a, yearTo: b >= max ? null : b });
   };
+  const release = () => draft && set(Math.round(draft[0]), Math.round(draft[1]));
   const inRange = [...counts.values()].filter((o) => Number(o.value) >= value[0] && Number(o.value) <= value[1]).reduce((s, o) => s + o.count, 0);
   const presets = [
     { label: "Last 3 years", a: Math.max(min, max - 2), b: max },
@@ -627,12 +630,12 @@ function YearRange({
         </span>
         <span className="text-xs text-muted-foreground tabular-nums">{inRange} questions</span>
       </div>
-      {/* two native range inputs on one track: cheap to open, smooth to drag on phones */}
-      <div className="dual-range relative mx-2 h-7">
+      {/* two native range inputs on one track: the thumbs glide with the finger, then settle on a whole year */}
+      <div className="dual-range relative mx-2 h-7" data-dragging={draft ? "" : undefined}>
         <div className="absolute inset-x-0 top-1/2 h-1.5 -translate-y-1/2 rounded-full bg-muted" />
         <div
-          className="absolute top-1/2 h-1.5 -translate-y-1/2 rounded-full bg-primary"
-          style={{ left: `${((value[0] - min) / (max - min)) * 100}%`, right: `${100 - ((value[1] - min) / (max - min)) * 100}%` }}
+          className="dual-range-fill absolute top-1/2 h-1.5 -translate-y-1/2 rounded-full bg-primary"
+          style={{ left: `${((pos[0] - min) / (max - min)) * 100}%`, right: `${100 - ((pos[1] - min) / (max - min)) * 100}%` }}
         />
         {[0, 1].map((i) => (
           <input
@@ -640,18 +643,28 @@ function YearRange({
             type="range"
             min={min}
             max={max}
-            step={1}
-            value={value[i]}
+            step="any"
+            value={pos[i]}
             aria-label={i === 0 ? "From year" : "To year"}
+            aria-valuetext={String(value[i])}
             // both thumbs at the far right: keep the "from" thumb on top so it can still move
             style={i === 0 && value[0] === max ? { zIndex: 1 } : undefined}
             onChange={(e) => {
               const v = Number(e.target.value);
-              setDraft(i === 0 ? [Math.min(v, value[1]), value[1]] : [value[0], Math.max(v, value[0])]);
+              setDraft(i === 0 ? [Math.min(v, pos[1]), pos[1]] : [pos[0], Math.max(v, pos[0])]);
             }}
-            onPointerUp={() => draft && set(draft[0], draft[1])}
-            onKeyUp={() => draft && set(draft[0], draft[1])}
-            onBlur={() => draft && set(draft[0], draft[1])}
+            onKeyDown={(e) => {
+              // arrow keys move a whole year
+              const d = e.key === "ArrowLeft" || e.key === "ArrowDown" ? -1 : e.key === "ArrowRight" || e.key === "ArrowUp" ? 1 : 0;
+              if (!d) return;
+              e.preventDefault();
+              const v = Math.max(min, Math.min(max, value[i] + d));
+              if (i === 0) set(Math.min(v, value[1]), value[1]);
+              else set(value[0], Math.max(v, value[0]));
+            }}
+            onPointerUp={release}
+            onTouchEnd={release}
+            onBlur={release}
           />
         ))}
       </div>
@@ -786,20 +799,20 @@ export function ActiveChips({
   if (chips.length === 0) return null;
 
   return (
-    <div className="flex flex-wrap items-center gap-2">
+    <div className="flex flex-wrap items-center gap-1.5">
       {chips.map((c) => (
         <button
           key={c.key}
           type="button"
           onClick={c.remove}
-          className="enter-up flex max-w-full items-center gap-1 rounded-full bg-primary/10 py-1 pr-2 pl-3 text-sm text-primary transition-colors hover:bg-primary/15"
+          className="enter-up flex h-7 max-w-full items-center gap-1 rounded-full bg-primary/10 pr-1.5 pl-2.5 text-xs font-medium text-primary transition-colors hover:bg-primary/15"
         >
           <span className="truncate">{c.label}</span>
-          <X className="size-3.5 shrink-0" />
+          <X className="size-3 shrink-0 opacity-70" />
         </button>
       ))}
       {chips.length > 1 && (
-        <button type="button" onClick={onClear} className="px-1 text-sm text-muted-foreground hover:text-foreground">
+        <button type="button" onClick={onClear} className="px-1 text-xs text-muted-foreground hover:text-foreground">
           Clear all
         </button>
       )}

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, type CSSProperties } from "react";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { fileUrl } from "@/lib/api";
 import { pageImageUrl, type Box, type DisplayImage } from "@/lib/review";
@@ -42,14 +42,18 @@ export function CropImage({ src, box, alt, className }: { src: string; box: Box;
  */
 export function QuestionImage({ image, paperId, alt, className }: { image: DisplayImage; paperId: string; alt: string; className?: string }) {
   const [zoom, setZoom] = useState(false);
-  // ~760 px = a full A4 page width at a comfortable reading size.
-  const width = `min(100%, ${Math.max(240, Math.round((image.box.x1 - image.box.x0) * 760))}px)`;
+  // A full A4 page width = ~760 px on phones / tablets, ~540 px on laptops (diagrams stay compact there).
+  const frac = image.box.x1 - image.box.x0;
+  const size = {
+    "--fig-w-sm": `${Math.max(240, Math.round(frac * 760))}px`,
+    "--fig-w-lg": `${Math.max(220, Math.round(frac * 540))}px`,
+  } as CSSProperties;
   if (image.path) {
     const src = fileUrl(image.path);
     return (
       <>
-        <button type="button" onClick={() => setZoom(true)} className="block max-w-full cursor-zoom-in" style={{ width }} title="Click to enlarge">
-          <FadeImg src={src} alt={alt} className={cn("max-h-[420px] w-full rounded-lg border bg-white object-contain p-1", className)} />
+        <button type="button" onClick={() => setZoom(true)} className="fig-size block max-w-full cursor-zoom-in" style={size} title="Click to enlarge">
+          <FadeImg src={src} alt={alt} className={cn("max-h-[420px] w-full rounded-lg lg:max-h-[300px] border bg-white object-contain p-1", className)} />
         </button>
         <Dialog open={zoom} onOpenChange={setZoom}>
           <DialogContent className="max-h-[92vh] w-auto max-w-[min(96vw,1100px)] overflow-auto bg-white p-3 sm:max-w-[min(96vw,1100px)]">
@@ -61,7 +65,7 @@ export function QuestionImage({ image, paperId, alt, className }: { image: Displ
     );
   }
   return (
-    <div className={cn("overflow-hidden rounded-lg border bg-white p-1", className)} style={{ width }}>
+    <div className={cn("fig-size overflow-hidden rounded-lg border bg-white p-1", className)} style={size}>
       <CropImage src={pageImageUrl(paperId, image.page)} box={image.box} alt={alt} />
     </div>
   );
