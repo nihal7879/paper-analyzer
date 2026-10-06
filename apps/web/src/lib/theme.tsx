@@ -1,4 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useSyncExternalStore } from "react";
+import { withFade } from "@/lib/preferences";
 
 export type Theme = "light" | "dark" | "system";
 
@@ -52,13 +53,19 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
   }, [resolvedTheme]);
 
   const setTheme = useCallback((next: Theme) => {
-    try {
-      if (next === "system") localStorage.removeItem(STORAGE_KEY);
-      else localStorage.setItem(STORAGE_KEY, next);
-    } catch {
-      // storage blocked: theme just won't persist
-    }
-    listeners.forEach((l) => l());
+    // Cross-fade light <-> dark instead of flashing (where the browser supports it).
+    withFade(() => {
+      try {
+        if (next === "system") localStorage.removeItem(STORAGE_KEY);
+        else localStorage.setItem(STORAGE_KEY, next);
+      } catch {
+        // storage blocked: theme just won't persist
+      }
+      const dark = next === "dark" || (next === "system" && media().matches);
+      document.documentElement.classList.toggle("dark", dark);
+      document.documentElement.style.colorScheme = dark ? "dark" : "light";
+      listeners.forEach((l) => l());
+    });
   }, []);
 
   return <ThemeContext.Provider value={{ theme, resolvedTheme, setTheme }}>{children}</ThemeContext.Provider>;

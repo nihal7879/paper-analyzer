@@ -1,11 +1,13 @@
 import { useQuery } from "@tanstack/react-query";
-import { ArrowUp, CheckCheck, Library, SearchX } from "lucide-react";
+import { ArrowUp, CheckCheck, CircleCheck, Library, Loader2, SearchX, X } from "lucide-react";
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useNavigationType, useSearchParams } from "react-router";
 import { ActiveChips, FilterRail, SearchBox } from "@/components/bank-filters";
 import { warmMath } from "@/components/math-text";
 import { SelectionBar } from "@/components/pdf-download";
 import { QuestionCard, type SimilarItem } from "@/components/question-card";
+import { SingleQuestionView } from "@/components/single-view";
+import { useViewMode } from "@/lib/preferences";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -87,6 +89,10 @@ export function BrowsePage() {
   const deferredSort = useDeferredValue(sort);
   const updating = deferredFilters !== filters || deferredSort !== sort;
   const selected = useSelection();
+  // "All" (list, the default) or "One at a time" — chosen in Settings (⚙), remembered on this device.
+  // Deferred: the Settings switch moves at once; the page re-draws right after, without blocking it.
+  const viewMode = useDeferredValue(useViewMode());
+  const [singleIndex, setSingleIndex] = useState(0);
 
   const bank = useQuestionBank();
   // The bank only contains published questions (students never see drafts).
@@ -185,6 +191,46 @@ export function BrowsePage() {
       clearTimeout(timer);
     };
   }, [results]);
+  const firstResults = useRef(true);
+  useEffect(() => {
+    if (firstResults.current) {
+      firstResults.current = false;
+      return;
+    }
+    setSingleIndex(0);
+  }, [deferredFilters, deferredSort]);
+  // Switching in Settings keeps your place: the list's top card becomes "question N", and back again.
+  const prevMode = useRef(viewMode);
+  const lastTopIndex = useRef(0);
+  useEffect(() => {
+    if (viewMode !== "list") return;
+    let frame = 0;
+    const onScroll = () => {
+      if (frame) return;
+      frame = requestAnimationFrame(() => {
+        frame = 0;
+        const top = [...document.querySelectorAll<HTMLElement>("[data-card-key]")].find((el) => el.getBoundingClientRect().bottom > 80);
+        const k = top ? results.findIndex((e) => e.key === top.dataset.cardKey) : -1;
+        if (k >= 0) lastTopIndex.current = k;
+      });
+    };
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => {
+      window.removeEventListener("scroll", onScroll);
+      cancelAnimationFrame(frame);
+    };
+  }, [viewMode, results]);
+  useEffect(() => {
+    if (prevMode.current === viewMode) return;
+    prevMode.current = viewMode;
+    if (viewMode === "single") setSingleIndex(lastTopIndex.current);
+    else {
+      const key = results[singleIndex]?.key;
+      setShown((n) => Math.max(n, singleIndex + PAGE_SIZE));
+      if (key) requestAnimationFrame(() => document.querySelector(`[data-card-key="${CSS.escape(key)}"]`)?.scrollIntoView({ block: "start" }));
+    }
+  }, [viewMode, results, singleIndex]);
+  const searching = filters.q.trim() !== "" && (updating || deferredFilters.q !== filters.q);
   const visible = results.slice(0, Math.min(shown, renderLimit));
   const pageCount = Math.min(shown, results.length);
   const paperCount = useMemo(() => new Set(results.map((r) => r.meta.id)).size, [results]);
@@ -233,10 +279,46 @@ export function BrowsePage() {
           {/* Search: top of the questions column, right of the filter rail */}
           <SearchBox value={filters.q} onChange={setQuery} />
 
+          {/* Search feedback: "searching…" while typing, then a clear "found N" (or nothing found) */}
+          {filters.q.trim() !== "" && !bank.isLoading && (
+            <div
+              key={searching ? "searching" : `done-${filters.q.trim()}-${results.length}`}
+              role="status"
+              className={cn(
+                "fade-in flex items-center gap-2 rounded-xl border px-3 py-2 text-sm",
+                searching ? "text-muted-foreground" : results.length ? "border-primary/30 bg-primary/5" : "border-destructive/30 bg-destructive/5",
+              )}
+            >
+              {searching ? (
+                <>
+                  <Loader2 className="size-4 animate-spin" /> Searching…
+                </>
+              ) : (
+                <>
+                  <CircleCheck className={cn("search-pop size-4 shrink-0", results.length ? "text-primary" : "text-destructive")} />
+                  <span className="min-w-0 truncate">
+                    {results.length ? (
+                      <>
+                        <b className="tabular-nums">{results.length}</b> question{results.length === 1 ? "" : "s"} found for <b>“{filters.q.trim()}”</b>
+                      </>
+                    ) : (
+                      <>
+                        No questions found for <b>“{filters.q.trim()}”</b>
+                      </>
+                    )}
+                  </span>
+                  <button type="button" onClick={() => setQuery("")} className="ml-auto flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground">
+                    <X className="size-3.5" /> Clear
+                  </button>
+                </>
+              )}
+            </div>
+          )}
 
-          {/* Toolbar */}
+
+          {/* Toolbar: phones show the count left and sort right on one line (no Select all) */}
           <div className="flex flex-wrap items-center gap-2">
-            <p className="order-last basis-full text-sm text-muted-foreground sm:order-none sm:mr-auto sm:basis-auto">
+            <p className="mr-auto text-sm text-muted-foreground">
               {!bank.isLoading && (
                 <>
                   <span className="font-semibold text-foreground">{results.length}</span> question{results.length === 1 ? "" : "s"}
@@ -253,7 +335,7 @@ export function BrowsePage() {
             {results.length > 0 && (
               <Button
                 variant="ghost"
-                className="h-10 gap-1.5 text-muted-foreground sm:h-9"
+                className="h-10 gap-1.5 text-muted-foreground max-sm:hidden sm:h-9"
                 aria-label={allResultsSelected ? "Unselect all" : "Select all"}
                 onClick={() => (allResultsSelected ? selection.removeMany : selection.addMany)(results.map((r) => r.question.id))}
                 title="Add every question in this list to the PDF"
@@ -263,7 +345,7 @@ export function BrowsePage() {
               </Button>
             )}
             <Select items={SORT_ITEMS} value={sort} onValueChange={(v) => update({}, (v as SortKey) ?? "newest")}>
-              <SelectTrigger className="h-10 w-44 sm:h-9" aria-label="Sort">
+              <SelectTrigger className="h-10 w-auto min-w-0 sm:h-9 sm:w-44" aria-label="Sort">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent align="end">
@@ -313,6 +395,8 @@ export function BrowsePage() {
                 )}
               </div>
             </Card>
+          ) : viewMode === "single" ? (
+            <SingleQuestionView results={results} index={singleIndex} onIndex={setSingleIndex} similarById={similarById} />
           ) : (
             <>
               <div className={cn("grid gap-4 transition-opacity duration-200", updating && "opacity-60")}>

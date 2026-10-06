@@ -6,6 +6,7 @@ import "katex/dist/katex.min.css";
 import "./index.css";
 import { Providers } from "@/components/providers";
 import { RouteError } from "@/components/route-error";
+import { SimilarModalHost } from "@/components/similar-modal";
 import { TopBar } from "@/components/top-bar";
 import { Skeleton } from "@/components/ui/skeleton";
 import { prefetchBankEarly } from "@/lib/query-client";
@@ -21,6 +22,7 @@ function Layout() {
       </main>
       {/* Back/forward returns to the same scroll position; new pages start at the top */}
       <ScrollRestoration />
+      <SimilarModalHost />
     </Providers>
   );
 }

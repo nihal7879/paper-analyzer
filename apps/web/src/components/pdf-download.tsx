@@ -100,7 +100,7 @@ export function SelectionBar({ ids, byId }: { ids: string[]; byId: Map<string, B
         aria-hidden={!visible}
         inert={!visible}
       >
-        <div className="pointer-events-auto flex w-full max-w-xl items-center gap-2 rounded-2xl border bg-popover/95 p-2 pl-4 shadow-lg ring-1 ring-foreground/5 backdrop-blur">
+        <div className="pointer-events-auto flex w-full max-w-xl items-center gap-2 rounded-2xl border bg-popover p-2 pl-4 shadow-lg ring-1 ring-foreground/5 lg:bg-popover/95 lg:backdrop-blur">
           <p className="mr-auto min-w-0 text-sm">
             <span className="font-semibold">{picked.length}</span> selected
             <span className="hidden text-muted-foreground sm:inline"> · {marks} mark{marks === 1 ? "" : "s"}</span>

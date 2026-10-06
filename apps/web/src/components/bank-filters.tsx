@@ -1,6 +1,5 @@
-import { Slider } from "@base-ui/react/slider";
 import { AlignLeft, CalendarDays, CalendarRange, Check, ChevronDown, ChevronRight, Gauge, GraduationCap, ListFilter, Minus, Search, X } from "lucide-react";
-import { memo, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useDeferredValue, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Collapse } from "@/components/collapse";
 import { difficultyLabel, difficultyStyle } from "@/lib/format";
 import { splitSubKey, type FacetOption, type Facets, type Filters, type MultiKey, type TopicNode } from "@/lib/question-bank";
@@ -108,7 +107,7 @@ const SubLabel = ({ children, first }: { children: React.ReactNode; first?: bool
   <span className={cn("px-1 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase", !first && "pt-1")}>{children}</span>
 );
 
-function SectionBody({ id, filters, facets, update, onCourse }: { id: SectionId; filters: Filters; facets: Facets; update: Update; onCourse: (c: string | null) => void }) {
+const SectionBody = memo(function SectionBody({ id, filters, facets, update, onCourse }: { id: SectionId; filters: Filters; facets: Facets; update: Update; onCourse: (c: string | null) => void }) {
   const multi = (key: MultiKey) => ({
     value: filters[key],
     onToggle: (v: string) => update({ [key]: filters[key].includes(v) ? filters[key].filter((x) => x !== v) : [...filters[key], v] } as Partial<Filters>),
@@ -143,7 +142,7 @@ function SectionBody({ id, filters, facets, update, onCourse }: { id: SectionId;
       <DifficultyPills options={facets.difficulties} {...multi("difficulty")} />
     </>
   );
-}
+});
 
 // ---------------------------------------------------------------- icon rail + fly-out
 
@@ -166,41 +165,105 @@ export const FilterRail = memo(function FilterRail({
   onClear: () => void;
   onCourse: (course: string | null) => void;
 }) {
+  // `open`: the chosen tab. `shown`: what the panel draws — kept for a moment while it slides away.
   const [open, setOpen] = useState<SectionId | null>(null);
+  const [shown, setShown] = useState<SectionId | null>(null);
+  const [closing, setClosing] = useState(false);
+  const closeTimer = useRef(0);
   const summary = sectionSummaries(filters, facets);
-  const sec = SECTIONS.find((x) => x.id === open);
+  // Deferred: the tab highlight and the panel slide in straight away, the contents fill in right after.
+  const body = useDeferredValue(shown);
+  const sec = SECTIONS.find((x) => x.id === shown);
+
+  const openTab = useCallback((id: SectionId) => {
+    clearTimeout(closeTimer.current);
+    setClosing(false);
+    setOpen(id);
+    setShown(id);
+  }, []);
+  const close = useCallback(() => {
+    setOpen(null);
+    setClosing(true);
+    clearTimeout(closeTimer.current);
+    closeTimer.current = window.setTimeout(() => {
+      setShown(null);
+      setClosing(false);
+    }, 170);
+  }, []);
+  useEffect(() => () => clearTimeout(closeTimer.current), []);
 
   useEffect(() => {
     if (!open) return;
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setOpen(null);
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && close();
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [open]);
+  }, [open, close]);
+
+  // The highlight slides to the chosen tab (sideways on the phone bar, up / down on the laptop rail).
+  const navRef = useRef<HTMLElement>(null);
+  const tabRefs = useRef<Partial<Record<SectionId, HTMLButtonElement | null>>>({});
+  const pillRef = useRef<HTMLSpanElement>(null);
+  const lastTab = useRef<SectionId | null>(null);
+  if (open) lastTab.current = open;
+  useLayoutEffect(() => {
+    const place = () => {
+      const id = lastTab.current;
+      const el = id ? tabRefs.current[id] : null;
+      const pill = pillRef.current;
+      if (!el || !pill) return;
+      pill.style.width = `${el.offsetWidth}px`;
+      pill.style.height = `${el.offsetHeight}px`;
+      pill.style.transform = `translate(${el.offsetLeft}px, ${el.offsetTop}px)`;
+    };
+    place();
+    const nav = navRef.current;
+    if (!nav) return;
+    const ro = new ResizeObserver(place);
+    ro.observe(nav);
+    return () => ro.disconnect();
+  }, [open, active]);
+
+  const tabCls =
+    "relative z-10 flex min-w-0 flex-1 flex-col items-center gap-1 rounded-xl px-1 py-2 text-[11px] font-medium text-muted-foreground transition-[color,scale] duration-200 active:scale-95 lg:flex-none lg:px-2 lg:py-2.5 lg:text-[11.5px]";
 
   return (
     <div className="relative">
       <nav
+        ref={navRef}
         aria-label="Filters"
-        className="fixed inset-x-0 bottom-0 z-40 flex h-[calc(4rem+env(safe-area-inset-bottom))] items-start justify-around border-t bg-card/95 px-1 pt-1 pb-[env(safe-area-inset-bottom)] shadow-[0_-4px_20px_rgba(0,0,0,0.06)] backdrop-blur lg:relative lg:inset-auto lg:h-auto lg:flex-col lg:items-stretch lg:justify-start lg:gap-1 lg:rounded-2xl lg:border lg:bg-card lg:p-2 lg:shadow-none lg:backdrop-blur-none"
+        className="fixed inset-x-0 bottom-0 z-40 flex h-[calc(4rem+env(safe-area-inset-bottom))] items-start justify-around border-t bg-card px-1 pt-1 pb-[env(safe-area-inset-bottom)] shadow-[0_-4px_20px_rgba(0,0,0,0.06)] lg:relative lg:inset-auto lg:h-auto lg:flex-col lg:items-stretch lg:justify-start lg:gap-1 lg:rounded-2xl lg:border lg:bg-card lg:p-2 lg:shadow-none"
       >
+        {/* sliding highlight behind the chosen tab */}
+        <span
+          ref={pillRef}
+          aria-hidden
+          className={cn(
+            "pointer-events-none absolute top-0 left-0 rounded-xl bg-primary transition-[transform,width,height,opacity] duration-300 ease-[cubic-bezier(0.2,0.8,0.2,1)] will-change-transform",
+            open ? "opacity-100" : "opacity-0",
+          )}
+        />
         {SECTIONS.map(({ id, short, icon: Icon }) => {
           const n = sectionCount(id, filters);
           const on = open === id;
           return (
             <button
               key={id}
+              ref={(el) => {
+                tabRefs.current[id] = el;
+              }}
               type="button"
               aria-expanded={on}
-              onClick={() => setOpen(on ? null : id)}
+              onClick={() => (on ? close() : openTab(id))}
               title={summary[id] ? `${short}: ${summary[id]}` : short}
-              className={cn(
-                "relative flex min-w-0 flex-1 flex-col items-center gap-1 rounded-xl px-1 py-2 text-[11px] font-medium text-muted-foreground transition-[background-color,color,scale] duration-150 hover:bg-muted hover:text-foreground active:scale-95 lg:flex-none lg:px-2 lg:py-2.5 lg:text-[11.5px]",
-                n > 0 && "text-primary",
-                on && "bg-primary text-primary-foreground hover:bg-primary hover:text-primary-foreground",
-              )}
+              className={cn(tabCls, !on && "hover:bg-muted hover:text-foreground", n > 0 && "text-primary", on && "text-primary-foreground")}
             >
               {n > 0 && (
-                <span className={cn("absolute top-1 right-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-bold text-primary-foreground", on && "bg-primary-foreground text-primary")}>
+                <span
+                  className={cn(
+                    "absolute top-1 right-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] font-bold text-primary-foreground transition-colors duration-200",
+                    on && "bg-primary-foreground text-primary",
+                  )}
+                >
                   {n}
                 </span>
               )}
@@ -214,9 +277,9 @@ export const FilterRail = memo(function FilterRail({
             type="button"
             onClick={() => {
               onClear();
-              setOpen(null);
+              close();
             }}
-            className="flex min-w-0 flex-1 flex-col items-center gap-1 rounded-xl px-1 py-2 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground lg:flex-none lg:px-2 lg:py-2.5 lg:text-[11.5px]"
+            className={cn(tabCls, "hover:bg-muted hover:text-foreground")}
           >
             <X className="size-5" />
             Clear
@@ -226,22 +289,34 @@ export const FilterRail = memo(function FilterRail({
 
       {sec && (
         <>
-          {/* click outside closes */}
-          <button type="button" aria-label="Close filter" className="fixed inset-0 z-30 cursor-default bg-black/25 lg:bg-transparent" onClick={() => setOpen(null)} />
+          {/* click outside closes; dims the page on phones */}
+          <button
+            type="button"
+            aria-label="Close filter"
+            className={cn("fixed inset-0 z-30 cursor-default bg-black/25 transition-opacity duration-200 lg:bg-transparent", closing ? "opacity-0" : "fade-in")}
+            onClick={close}
+          />
           <div
             role="dialog"
             aria-label={sec.title}
-            className="panel-scroll sheet-up fixed inset-x-0 bottom-[calc(4rem+env(safe-area-inset-bottom))] z-40 grid max-h-[65dvh] grid-cols-[minmax(0,1fr)] gap-1.5 overflow-y-auto rounded-t-2xl border-t bg-popover p-4 shadow-[0_-12px_40px_rgba(0,0,0,0.15)] lg:absolute lg:inset-x-auto lg:top-0 lg:bottom-auto lg:left-[calc(100%+12px)] lg:max-h-[calc(100vh-7rem)] lg:w-[340px] lg:rounded-2xl lg:border lg:shadow-xl"
+            className={cn(
+              "panel-scroll fixed inset-x-0 bottom-[calc(4rem+env(safe-area-inset-bottom))] z-40 grid max-h-[65dvh] grid-cols-[minmax(0,1fr)] gap-1.5 overflow-y-auto rounded-t-2xl border-t bg-popover p-4 shadow-[0_-12px_40px_rgba(0,0,0,0.15)] will-change-transform lg:absolute lg:inset-x-auto lg:top-0 lg:bottom-auto lg:left-[calc(100%+12px)] lg:max-h-[calc(100vh-7rem)] lg:w-[340px] lg:rounded-2xl lg:border lg:shadow-xl",
+              closing ? "sheet-down" : "sheet-up",
+            )}
           >
-            <div key={sec.id} className="fade-in grid grid-cols-[minmax(0,1fr)] gap-1.5">
-            <div className="mb-1 flex items-center gap-2">
-              <span className="text-[15px] font-semibold">{sec.title}</span>
-              {summary[sec.id] && <span className="truncate text-xs font-medium text-primary">{summary[sec.id]}</span>}
-              <button type="button" onClick={() => setOpen(null)} aria-label="Close" className="ml-auto flex size-8 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground">
-                <X className="size-4" />
-              </button>
-            </div>
-            <SectionBody id={sec.id} filters={filters} facets={facets} update={update} onCourse={onCourse} />
+            <div className="grid grid-cols-[minmax(0,1fr)] gap-1.5">
+              <div className="mb-1 flex items-center gap-2">
+                <span className="text-[15px] font-semibold">{sec.title}</span>
+                {summary[sec.id] && <span className="truncate text-xs font-medium text-primary">{summary[sec.id]}</span>}
+                <button type="button" onClick={close} aria-label="Close" className="ml-auto flex size-8 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground">
+                  <X className="size-4" />
+                </button>
+              </div>
+              {body === sec.id ? (
+                <SectionBody key={body} id={body} filters={filters} facets={facets} update={update} onCourse={onCourse} />
+              ) : (
+                <div className="min-h-40" />
+              )}
             </div>
           </div>
         </>
@@ -381,6 +456,8 @@ function CheckBox({ state }: { state: "on" | "off" | "some" }) {
 function TopicTree({ nodes, filters, update }: { nodes: TopicNode[]; filters: Filters; update: Update }) {
   const [query, setQuery] = useState("");
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set(filters.sub.map((k) => splitSubKey(k).topic)));
+  // Subtopic rows are only built once a topic has been opened (keeps opening the Topic panel light).
+  const opened = useRef<Set<string>>(new Set());
   if (nodes.length === 0) return <p className="px-2 text-xs text-muted-foreground">Nothing to filter yet</p>;
 
   const q = query.trim().toLowerCase();
@@ -449,6 +526,8 @@ function TopicTree({ nodes, filters, update }: { nodes: TopicNode[]; filters: Fi
           const whole = filters.topic.includes(n.topic);
           const some = !whole && n.subs.some((s) => filters.sub.includes(s.key));
           const open = !!q || expanded.has(n.topic);
+          if (open) opened.current.add(n.topic);
+          const built = opened.current.has(n.topic);
           return (
             <li key={n.topic}>
               <div className="flex items-center">
@@ -470,7 +549,7 @@ function TopicTree({ nodes, filters, update }: { nodes: TopicNode[]; filters: Fi
                   <span className="text-xs text-muted-foreground tabular-nums">{n.count}</span>
                 </button>
               </div>
-              {n.subs.length > 0 && (
+              {n.subs.length > 0 && built && (
                 <Collapse open={open}>
                   <ul className="ml-[18px] grid grid-cols-[minmax(0,1fr)] gap-0.5 border-l py-0.5 pl-2 lg:ml-[14px]">
                     {n.subs.map((s) => {
@@ -548,29 +627,34 @@ function YearRange({
         </span>
         <span className="text-xs text-muted-foreground tabular-nums">{inRange} questions</span>
       </div>
-      <Slider.Root
-        value={value}
-        min={min}
-        max={max}
-        step={1}
-        onValueChange={(v) => Array.isArray(v) && setDraft([v[0], v[1]])}
-        onValueCommitted={(v) => Array.isArray(v) && set(v[0], v[1])}
-        className="px-2"
-      >
-        <Slider.Control className="flex h-7 w-full touch-none items-center select-none">
-          <Slider.Track className="relative h-1.5 w-full rounded-full bg-muted">
-            <Slider.Indicator className="rounded-full bg-primary" />
-            {[0, 1].map((i) => (
-              <Slider.Thumb
-                key={i}
-                index={i}
-                getAriaLabel={(idx) => (idx === 0 ? "From year" : "To year")}
-                className="size-5 rounded-full border-2 border-primary bg-background shadow-sm outline-none transition-[box-shadow] focus-visible:ring-4 focus-visible:ring-ring/30 data-dragging:ring-4 data-dragging:ring-ring/30"
-              />
-            ))}
-          </Slider.Track>
-        </Slider.Control>
-      </Slider.Root>
+      {/* two native range inputs on one track: cheap to open, smooth to drag on phones */}
+      <div className="dual-range relative mx-2 h-7">
+        <div className="absolute inset-x-0 top-1/2 h-1.5 -translate-y-1/2 rounded-full bg-muted" />
+        <div
+          className="absolute top-1/2 h-1.5 -translate-y-1/2 rounded-full bg-primary"
+          style={{ left: `${((value[0] - min) / (max - min)) * 100}%`, right: `${100 - ((value[1] - min) / (max - min)) * 100}%` }}
+        />
+        {[0, 1].map((i) => (
+          <input
+            key={i}
+            type="range"
+            min={min}
+            max={max}
+            step={1}
+            value={value[i]}
+            aria-label={i === 0 ? "From year" : "To year"}
+            // both thumbs at the far right: keep the "from" thumb on top so it can still move
+            style={i === 0 && value[0] === max ? { zIndex: 1 } : undefined}
+            onChange={(e) => {
+              const v = Number(e.target.value);
+              setDraft(i === 0 ? [Math.min(v, value[1]), value[1]] : [value[0], Math.max(v, value[0])]);
+            }}
+            onPointerUp={() => draft && set(draft[0], draft[1])}
+            onKeyUp={() => draft && set(draft[0], draft[1])}
+            onBlur={() => draft && set(draft[0], draft[1])}
+          />
+        ))}
+      </div>
       <div className="flex justify-between px-1 text-[11px] text-muted-foreground tabular-nums">
         <span>{min}</span>
         <span>{max}</span>

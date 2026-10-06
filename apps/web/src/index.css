@@ -4,6 +4,16 @@
 
 @custom-variant dark (&:is(.dark *));
 
+/* Hover effects only for a real mouse / trackpad. Many phones and tablets claim "hover" support, and then
+   a tapped button keeps its grey hover background stuck on (e.g. "Select all", "Paper", "Add to PDF"). */
+@custom-variant hover {
+  @media (hover: hover) and (pointer: fine) {
+    &:hover {
+      @slot;
+    }
+  }
+}
+
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
@@ -116,6 +126,65 @@
   --sidebar-accent-foreground: #e6efec;
   --sidebar-border: rgb(255 255 255 / 10%);
   --sidebar-ring: #3bb3a5;
+}
+
+/* Colour theme "Blue" (Settings → Colour): the earlier look — white page, neutral greys, blue accent. */
+:root[data-color="blue"] {
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.145 0 0);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.145 0 0);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.145 0 0);
+  --primary: oklch(0.488 0.217 264);
+  --primary-foreground: oklch(0.985 0 0);
+  --secondary: oklch(0.97 0 0);
+  --secondary-foreground: oklch(0.205 0 0);
+  --muted: oklch(0.97 0 0);
+  --muted-foreground: oklch(0.556 0 0);
+  --accent: oklch(0.97 0 0);
+  --accent-foreground: oklch(0.205 0 0);
+  --destructive: oklch(0.577 0.245 27.325);
+  --border: oklch(0.922 0 0);
+  --input: oklch(0.922 0 0);
+  --ring: oklch(0.62 0.17 264);
+  --radius: 0.625rem;
+  --sidebar: oklch(0.985 0 0);
+  --sidebar-foreground: oklch(0.145 0 0);
+  --sidebar-primary: oklch(0.205 0 0);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.97 0 0);
+  --sidebar-accent-foreground: oklch(0.205 0 0);
+  --sidebar-border: oklch(0.922 0 0);
+  --sidebar-ring: oklch(0.708 0 0);
+}
+:root[data-color="blue"].dark {
+  --background: oklch(0.145 0 0);
+  --foreground: oklch(0.985 0 0);
+  --card: oklch(0.205 0 0);
+  --card-foreground: oklch(0.985 0 0);
+  --popover: oklch(0.205 0 0);
+  --popover-foreground: oklch(0.985 0 0);
+  --primary: oklch(0.68 0.16 264);
+  --primary-foreground: oklch(0.16 0.03 264);
+  --secondary: oklch(0.269 0 0);
+  --secondary-foreground: oklch(0.985 0 0);
+  --muted: oklch(0.269 0 0);
+  --muted-foreground: oklch(0.708 0 0);
+  --accent: oklch(0.269 0 0);
+  --accent-foreground: oklch(0.985 0 0);
+  --destructive: oklch(0.704 0.191 22.216);
+  --border: oklch(1 0 0 / 10%);
+  --input: oklch(1 0 0 / 15%);
+  --ring: oklch(0.55 0.15 264);
+  --sidebar: oklch(0.205 0 0);
+  --sidebar-foreground: oklch(0.985 0 0);
+  --sidebar-primary: oklch(0.488 0.243 264.376);
+  --sidebar-primary-foreground: oklch(0.985 0 0);
+  --sidebar-accent: oklch(0.269 0 0);
+  --sidebar-accent-foreground: oklch(0.985 0 0);
+  --sidebar-border: oklch(1 0 0 / 10%);
+  --sidebar-ring: oklch(0.556 0 0);
 }
 
 @layer base {
@@ -317,6 +386,49 @@ html {
     animation-name: enter-up;
   }
 }
+@keyframes sheet-down {
+  to {
+    opacity: 0;
+    transform: translateY(24px);
+  }
+}
+.sheet-down {
+  animation: sheet-down 170ms cubic-bezier(0.4, 0, 1, 1) both;
+}
+@keyframes lift-away {
+  to {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+@media (min-width: 64rem) {
+  .sheet-down {
+    animation-name: lift-away;
+  }
+}
+
+/* Search finished: the tick pops in */
+@keyframes search-pop {
+  0% {
+    transform: scale(0.4);
+    opacity: 0;
+  }
+  70% {
+    transform: scale(1.2);
+  }
+}
+.search-pop {
+  animation: search-pop 320ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+/* Touch screens: every tap shows at once (the grey tap flash is off, so this replaces it) */
+@media (hover: none) {
+  button:not(:disabled):active,
+  a:active,
+  [role="button"]:active {
+    filter: brightness(0.94);
+  }
+}
 
 /* Images fade in once loaded instead of popping */
 .fade-img {
@@ -373,3 +485,59 @@ html {
     display: none;
   }
 }
+
+/* year slider: two native range inputs share one track; only the thumbs take touches */
+.dual-range input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  background: transparent;
+  pointer-events: none;
+  appearance: none;
+  -webkit-appearance: none;
+  -webkit-tap-highlight-color: transparent;
+}
+.dual-range input::-webkit-slider-runnable-track { background: transparent; }
+.dual-range input::-moz-range-track { background: transparent; }
+.dual-range input::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  pointer-events: auto;
+  width: 22px;
+  height: 22px;
+  border-radius: 9999px;
+  border: 2px solid var(--primary);
+  background: var(--background);
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.2);
+  cursor: grab;
+}
+.dual-range input::-moz-range-thumb {
+  pointer-events: auto;
+  width: 18px;
+  height: 18px;
+  border-radius: 9999px;
+  border: 2px solid var(--primary);
+  background: var(--background);
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.2);
+  cursor: grab;
+}
+.dual-range input:focus-visible::-webkit-slider-thumb { box-shadow: 0 0 0 4px color-mix(in oklab, var(--ring) 30%, transparent); }
+.dual-range input:active::-webkit-slider-thumb { cursor: grabbing; box-shadow: 0 0 0 6px color-mix(in oklab, var(--ring) 25%, transparent); }
+/* phones draw their own blue fill / focus ring on range inputs: switch it all off, our track shows the colour */
+.dual-range input {
+  accent-color: var(--primary);
+  outline: none;
+  color: transparent;
+}
+.dual-range input::-webkit-slider-runnable-track {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 100%;
+  border: 0;
+  box-shadow: none;
+}
+.dual-range input::-moz-range-progress { background: transparent; }
+.dual-range input::-webkit-slider-thumb { margin-top: 3px; } /* (28px track - 22px thumb) / 2: centred on the line */
+.dual-range input:focus,
+.dual-range input:focus-visible { outline: none; }

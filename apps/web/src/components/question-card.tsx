@@ -1,4 +1,4 @@
-import { Check, ChevronRight, Download, ExternalLink, Eye, EyeOff, FileText, Plus, RotateCcw, Sparkles, TriangleAlert, X } from "lucide-react";
+import { Check, ChevronLeft, ChevronRight, Download, ExternalLink, Eye, EyeOff, FileText, Plus, RotateCcw, Sparkles, TriangleAlert, X } from "lucide-react";
 import { memo, useState } from "react";
 import { Link } from "react-router";
 import { Collapse } from "@/components/collapse";
@@ -11,7 +11,9 @@ import { Card } from "@/components/ui/card";
 import { sourceLine, type PaperMeta, type Question } from "@/lib/api";
 import { pageImageUrl, type DisplayImage } from "@/lib/review";
 import { difficultyLabel, difficultyStyle, typeLabel } from "@/lib/format";
+import { useSimilarMode } from "@/lib/preferences";
 import { selection, useIsSelected } from "@/lib/selection";
+import { openSimilarModal } from "@/components/similar-modal";
 import { cn } from "@/lib/utils";
 
 export type CardQuestion = Omit<Question, "images"> & { images: DisplayImage[] };
@@ -44,6 +46,8 @@ export const QuestionCard = memo(function QuestionCard({
 }) {
   const [revealed, setRevealed] = useState(false);
   const [picked, setPicked] = useState<string | null>(null);
+  const [showSimilar, setShowSimilar] = useState(false);
+  const similarMode = useSimilarMode();
   const correct = q.answer?.correctOption?.toUpperCase() ?? null;
   // MCQs with a known answer are answered by clicking an option; everything else shows the mark scheme.
   const quiz = q.options.length > 0 && !!correct;
@@ -215,25 +219,111 @@ export const QuestionCard = memo(function QuestionCard({
           </div>
         )}
 
-        {/* Similar questions (by meaning, from other papers) open on their own page */}
+        {/* Similar questions (by meaning, from other papers): a page, a pop-up or inside the card (Settings) */}
         {similar.length > 0 && (
           <div className="border-t pt-3">
-            <Link
-              to={`/similar/${q.id}`}
-              viewTransition
-              className="flex w-full items-center justify-between gap-2 rounded-md py-1 text-sm font-medium text-primary hover:underline"
-            >
-              <span className="flex items-center gap-1.5">
-                <Sparkles className="size-4" /> Similar questions ({similar.length})
-              </span>
-              <ChevronRight className="size-4" />
-            </Link>
+            {similarMode === "page" ? (
+              <Link to={`/similar/${q.id}`} viewTransition className={similarLinkCls}>
+                <span className="flex items-center gap-1.5">
+                  <Sparkles className="size-4" /> Similar questions ({similar.length})
+                </span>
+                <ChevronRight className="size-4" />
+              </Link>
+            ) : (
+              <button
+                type="button"
+                aria-expanded={similarMode === "inline" ? showSimilar : undefined}
+                onClick={() => (similarMode === "modal" ? openSimilarModal(similar, 0) : setShowSimilar((v) => !v))}
+                className={similarLinkCls}
+              >
+                <span className="flex items-center gap-1.5">
+                  <Sparkles className="size-4" /> Similar questions ({similar.length})
+                </span>
+                <ChevronRight className={cn("size-4 transition-transform duration-200", similarMode === "inline" && showSimilar && "rotate-90")} />
+              </button>
+            )}
+            {similarMode === "inline" && showSimilar && <SimilarPanel list={similar} selectable={selectable} />}
           </div>
         )}
       </div>
     </Card>
   );
 });
+
+const similarLinkCls = "flex w-full items-center justify-between gap-2 rounded-md py-1 text-left text-sm font-medium text-primary hover:underline";
+
+/**
+ * Similar questions inside the card: the list on the left (a swipe row on phones), the chosen
+ * question previewed on the right. ‹ › buttons and the arrow keys step through the list.
+ */
+function SimilarPanel({ list, selectable }: { list: SimilarItem[]; selectable: boolean }) {
+  const [index, setIndex] = useState(0);
+  const i = Math.min(index, list.length - 1);
+  const current = list[i];
+  const go = (k: number) => setIndex(Math.max(0, Math.min(list.length - 1, k)));
+  const shortSource = (s: SimilarItem) => `${s.meta.seasonName} ${s.meta.year} · Paper ${s.meta.paperCode} · Q${s.question.number}`;
+  const arrow = "flex size-8 items-center justify-center rounded-full border bg-background shadow-xs transition-[opacity,scale] hover:scale-105 active:scale-95 disabled:opacity-35";
+
+  return (
+    <div
+      className="fade-in mt-3 grid grid-cols-[minmax(0,1fr)] overflow-hidden rounded-xl border lg:grid-cols-[250px_minmax(0,1fr)]"
+      onKeyDown={(e) => {
+        if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
+          e.preventDefault();
+          go(i - 1);
+        }
+        if (e.key === "ArrowRight" || e.key === "ArrowDown") {
+          e.preventDefault();
+          go(i + 1);
+        }
+      }}
+    >
+      <div role="tablist" aria-label="Similar questions" className="flex gap-1.5 overflow-x-auto border-b bg-muted/50 p-2 lg:max-h-[680px] lg:flex-col lg:overflow-x-visible lg:overflow-y-auto lg:border-r lg:border-b-0">
+        {list.map((s, k) => {
+          const on = k === i;
+          return (
+            <button
+              key={s.key}
+              type="button"
+              role="tab"
+              aria-selected={on}
+              onClick={() => go(k)}
+              className={cn("grid w-[220px] shrink-0 gap-1 rounded-lg border bg-background px-3 py-2.5 text-left transition-colors hover:border-primary/40 lg:w-full", on && "border-primary ring-1 ring-primary/25")}
+            >
+              <span className="flex items-center gap-2 text-[13px] font-semibold">
+                <span className={cn("flex size-5 shrink-0 items-center justify-center rounded-full bg-muted text-[11px]", on && "bg-primary text-primary-foreground")}>{k + 1}</span>
+                <span className="truncate">{shortSource(s)}</span>
+              </span>
+              <span className="truncate text-xs text-muted-foreground">{s.question.subtopic || s.question.topic}</span>
+              <span className="flex flex-wrap gap-1">
+                <Badge variant="outline" className="h-5 px-1.5 text-[11px] font-normal">
+                  {typeLabel[s.question.type]}
+                </Badge>
+                <Badge className={cn("h-5 border-transparent px-1.5 text-[11px] font-normal", difficultyStyle[s.question.difficulty])}>{difficultyLabel(s.question.difficulty)}</Badge>
+              </span>
+            </button>
+          );
+        })}
+      </div>
+      <div className="min-w-0">
+        <div className="flex items-center gap-2 border-b bg-muted/30 px-3 py-2">
+          <button type="button" className={arrow} onClick={() => go(i - 1)} disabled={i === 0} aria-label="Previous similar question">
+            <ChevronLeft className="size-4" />
+          </button>
+          <button type="button" className={arrow} onClick={() => go(i + 1)} disabled={i === list.length - 1} aria-label="Next similar question">
+            <ChevronRight className="size-4" />
+          </button>
+          <span className="text-sm font-medium">
+            Similar {i + 1} of {list.length}
+          </span>
+        </div>
+        <div key={current.key} className="fade-in">
+          <QuestionCard question={current.question} meta={current.meta} selectable={selectable} className="rounded-none border-0" />
+        </div>
+      </div>
+    </div>
+  );
+}
 
 /** Adds / removes the question from the PDF selection (re-renders only this button). */
 function SelectButton({ id }: { id: string }) {

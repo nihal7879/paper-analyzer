@@ -1,5 +1,6 @@
 import { BookOpenCheck, FileStack, LibraryBig, LogOut, Moon, ShieldCheck, Sun, Upload } from "lucide-react";
 import { Link, NavLink, useLocation, useNavigate } from "react-router";
+import { SettingsMenu } from "@/components/settings-menu";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useAdmin } from "@/lib/admin";
@@ -13,7 +14,7 @@ export function TopBar() {
   const { pathname } = useLocation();
 
   return (
-    <header className="sticky top-0 z-40 border-b bg-card/90 pt-[env(safe-area-inset-top)] backdrop-blur supports-backdrop-filter:bg-card/75">
+    <header className="sticky top-0 z-40 border-b bg-card pt-[env(safe-area-inset-top)] lg:bg-card/90 lg:backdrop-blur lg:supports-backdrop-filter:bg-card/75">
       <div className="mx-auto flex h-14 max-w-7xl items-center gap-2 px-4 sm:gap-4">
         <Link viewTransition to="/" className="flex shrink-0 items-center gap-2 font-semibold tracking-tight">
           <span className="flex size-8 items-center justify-center rounded-lg bg-primary text-primary-foreground">
@@ -48,6 +49,7 @@ export function TopBar() {
               <ShieldCheck className="size-3.5" /> Admin
             </Badge>
           )}
+          <SettingsMenu />
           <Button variant="ghost" size="icon" aria-label="Toggle theme" onClick={() => setTheme(resolvedTheme === "dark" ? "light" : "dark")}>
             <Sun className="size-4 dark:hidden" />
             <Moon className="hidden size-4 dark:block" />
