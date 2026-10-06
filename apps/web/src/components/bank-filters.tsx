@@ -181,7 +181,7 @@ export const FilterRail = memo(function FilterRail({
     <div className="relative">
       <nav
         aria-label="Filters"
-        className="relative z-40 flex gap-1 overflow-x-auto rounded-2xl border bg-card p-1.5 lg:flex-col lg:overflow-visible lg:p-2"
+        className="fixed inset-x-0 bottom-0 z-40 flex h-[calc(4rem+env(safe-area-inset-bottom))] items-start justify-around border-t bg-card/95 px-1 pt-1 pb-[env(safe-area-inset-bottom)] shadow-[0_-4px_20px_rgba(0,0,0,0.06)] backdrop-blur lg:relative lg:inset-auto lg:h-auto lg:flex-col lg:items-stretch lg:justify-start lg:gap-1 lg:rounded-2xl lg:border lg:bg-card lg:p-2 lg:shadow-none lg:backdrop-blur-none"
       >
         {SECTIONS.map(({ id, short, icon: Icon }) => {
           const n = sectionCount(id, filters);
@@ -194,7 +194,7 @@ export const FilterRail = memo(function FilterRail({
               onClick={() => setOpen(on ? null : id)}
               title={summary[id] ? `${short}: ${summary[id]}` : short}
               className={cn(
-                "relative flex min-w-16 shrink-0 flex-col items-center gap-1 rounded-xl px-2 py-2.5 text-[11.5px] font-medium text-muted-foreground transition-[background-color,color,scale] duration-150 hover:bg-muted hover:text-foreground active:scale-95 lg:min-w-0",
+                "relative flex min-w-0 flex-1 flex-col items-center gap-1 rounded-xl px-1 py-2 text-[11px] font-medium text-muted-foreground transition-[background-color,color,scale] duration-150 hover:bg-muted hover:text-foreground active:scale-95 lg:flex-none lg:px-2 lg:py-2.5 lg:text-[11.5px]",
                 n > 0 && "text-primary",
                 on && "bg-primary text-primary-foreground hover:bg-primary hover:text-primary-foreground",
               )}
@@ -216,7 +216,7 @@ export const FilterRail = memo(function FilterRail({
               onClear();
               setOpen(null);
             }}
-            className="flex min-w-16 shrink-0 flex-col items-center gap-1 rounded-xl px-2 py-2.5 text-[11.5px] font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground lg:min-w-0"
+            className="flex min-w-0 flex-1 flex-col items-center gap-1 rounded-xl px-1 py-2 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground lg:flex-none lg:px-2 lg:py-2.5 lg:text-[11.5px]"
           >
             <X className="size-5" />
             Clear
@@ -227,11 +227,11 @@ export const FilterRail = memo(function FilterRail({
       {sec && (
         <>
           {/* click outside closes */}
-          <button type="button" aria-label="Close filter" className="fixed inset-0 z-30 cursor-default" onClick={() => setOpen(null)} />
+          <button type="button" aria-label="Close filter" className="fixed inset-0 z-30 cursor-default bg-black/25 lg:bg-transparent" onClick={() => setOpen(null)} />
           <div
             role="dialog"
             aria-label={sec.title}
-            className="panel-scroll enter-up absolute top-full left-0 z-40 mt-2 grid max-h-[70vh] w-full grid-cols-[minmax(0,1fr)] gap-1.5 overflow-y-auto rounded-2xl border bg-popover p-4 shadow-xl lg:top-0 lg:left-[calc(100%+12px)] lg:mt-0 lg:max-h-[calc(100vh-7rem)] lg:w-[340px]"
+            className="panel-scroll sheet-up fixed inset-x-0 bottom-[calc(4rem+env(safe-area-inset-bottom))] z-40 grid max-h-[65dvh] grid-cols-[minmax(0,1fr)] gap-1.5 overflow-y-auto rounded-t-2xl border-t bg-popover p-4 shadow-[0_-12px_40px_rgba(0,0,0,0.15)] lg:absolute lg:inset-x-auto lg:top-0 lg:bottom-auto lg:left-[calc(100%+12px)] lg:max-h-[calc(100vh-7rem)] lg:w-[340px] lg:rounded-2xl lg:border lg:shadow-xl"
           >
             <div key={sec.id} className="fade-in grid grid-cols-[minmax(0,1fr)] gap-1.5">
             <div className="mb-1 flex items-center gap-2">

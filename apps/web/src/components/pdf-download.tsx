@@ -94,7 +94,7 @@ export function SelectionBar({ ids, byId }: { ids: string[]; byId: Map<string, B
     <>
       <div
         className={cn(
-          "pointer-events-none fixed inset-x-0 bottom-[max(1rem,env(safe-area-inset-bottom))] z-30 flex justify-center px-4 transition-[transform,opacity] duration-300 ease-out",
+          "pointer-events-none fixed inset-x-0 bottom-[calc(4.75rem+env(safe-area-inset-bottom))] z-30 lg:bottom-[max(1rem,env(safe-area-inset-bottom))] flex justify-center px-4 transition-[transform,opacity] duration-300 ease-out",
           visible ? "translate-y-0 opacity-100" : "translate-y-6 opacity-0",
         )}
         aria-hidden={!visible}

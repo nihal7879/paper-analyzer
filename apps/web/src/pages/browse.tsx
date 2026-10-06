@@ -229,7 +229,7 @@ export function BrowsePage() {
         </div>
 
         {/* Results */}
-        <section className={cn("grid min-w-0 gap-4", selected.length > 0 && "pb-20")}>
+        <section className={cn("grid min-w-0 gap-4 pb-20 lg:pb-0", selected.length > 0 && "pb-36 lg:pb-20")}>
           {/* Search: top of the questions column, right of the filter rail */}
           <SearchBox value={filters.q} onChange={setQuery} />
 
