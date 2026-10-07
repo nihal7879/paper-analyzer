@@ -736,3 +736,67 @@ html {
 .btn-soft:active {
   box-shadow: 0 1px 1px rgb(15 35 80 / 0.06);
 }
+
+/* Height of the top bar (admins only) — sticky things sit just below it */
+:root {
+  --header-h: 0px;
+}
+:root:has(header[data-topbar]) {
+  --header-h: 3.5rem;
+}
+
+/* Tables inside questions / answers (data tables from the paper) */
+.math-text table {
+  border-collapse: collapse;
+  margin: 0.25rem 0;
+  font-size: 0.95em;
+}
+.math-text th,
+.math-text td {
+  border: 1px solid color-mix(in oklab, var(--foreground) 22%, transparent);
+  padding: 0.35rem 0.85rem;
+  text-align: center;
+  vertical-align: middle;
+}
+.math-text th {
+  background: var(--muted);
+  font-weight: 600;
+}
+/* phones: a wide table scrolls sideways inside the card instead of widening the page */
+@media (max-width: 63.99rem) {
+  .math-text table {
+    display: block;
+    max-width: 100%;
+    overflow-x: auto;
+  }
+}
+/* PDF: tables and figures sit in the middle of the page, like the question paper */
+.print-doc .math-text table {
+  display: table;
+  margin: 0.5rem auto;
+}
+.print-doc .math-text th,
+.print-doc .math-text td {
+  border-color: #000;
+}
+.print-doc .math-text th {
+  background: #f2f2f2;
+}
+/* keep a unit like 10⁻³ m together inside table cells (a wide table scrolls on phones instead) */
+.math-text th,
+.math-text td,
+.math-text th .katex,
+.math-text td .katex {
+  white-space: nowrap;
+}
+/* Empty columns are the paper's space for students' working ("use the additional column"): keep them wide */
+.math-text th:empty,
+.math-text td:empty {
+  width: 8rem;
+  min-width: 8rem;
+}
+.print-doc .math-text th:empty,
+.print-doc .math-text td:empty {
+  width: 9rem;
+  min-width: 9rem;
+}

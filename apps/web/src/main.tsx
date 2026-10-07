@@ -2,22 +2,21 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { createBrowserRouter, Outlet, redirect, RouterProvider, ScrollRestoration } from "react-router";
 import "@fontsource-variable/geist";
-import "katex/dist/katex.min.css";
+// KaTeX styles: must be the same KaTeX version that rehype-katex renders with (0.16.x)
+import "katex/dist/katex.css";
 import "./index.css";
 import { Providers } from "@/components/providers";
 import { RouteError } from "@/components/route-error";
 import { SimilarModalHost } from "@/components/similar-modal";
 import { TopBar } from "@/components/top-bar";
 import { Skeleton } from "@/components/ui/skeleton";
-import { prefetchBankEarly } from "@/lib/query-client";
 
-prefetchBankEarly();
 
 function Layout() {
   return (
     <Providers>
       <TopBar />
-      <main className="mx-auto w-full max-w-7xl flex-1 px-3 pt-3 pb-4 sm:px-4 sm:pt-4 sm:pb-8">
+      <main className="mx-auto w-full max-w-7xl flex-1 px-3 pt-[max(0.75rem,env(safe-area-inset-top))] pb-4 sm:px-4 sm:pt-4 sm:pb-8">
         <Outlet />
       </main>
       {/* Back/forward returns to the same scroll position; new pages start at the top */}

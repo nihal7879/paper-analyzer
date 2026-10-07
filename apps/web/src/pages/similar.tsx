@@ -3,13 +3,16 @@ import { useCallback, useEffect, useMemo } from "react";
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from "react-router";
 import { SelectionBar } from "@/components/pdf-download";
 import { QuestionCard } from "@/components/question-card";
+import { Logo } from "@/components/top-bar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useAdmin } from "@/lib/admin";
 import { sourceLine } from "@/lib/api";
 import { difficultyLabel, difficultyStyle, typeLabel } from "@/lib/format";
-import { useQuestionBank, type BankEntry } from "@/lib/question-bank";
+import { useEntries } from "@/lib/bank-api";
+import type { BankEntry } from "@/lib/question-bank";
 import { useSelection } from "@/lib/selection";
 import { cn } from "@/lib/utils";
 
@@ -22,18 +25,22 @@ const SIMILAR_COUNT = 5;
  * ‹ › buttons and the ← → keys step through; ?i= keeps the position in the link.
  */
 export function SimilarPage() {
+  const { isAdmin } = useAdmin();
   const { id = "" } = useParams();
   const [params, setParams] = useSearchParams();
   const navigate = useNavigate();
   const location = useLocation();
-  const bank = useQuestionBank();
   const selected = useSelection();
   const selectedSet = useMemo(() => new Set(selected), [selected]);
 
-  const byId = useMemo(() => new Map(bank.entries.map((e) => [e.question.id, e])), [bank.entries]);
-  const origin = byId.get(id);
+  // The question, then its similar ones (best first), asked from the server by id.
+  const originQuery = useEntries(useMemo(() => [id], [id]));
+  const origin = originQuery.byId.get(id);
+  const similarIds = useMemo(() => origin?.question.similarIds.slice(0, SIMILAR_COUNT + 3) ?? [], [origin]);
+  const similarQuery = useEntries(similarIds);
   // Item 0 is the student's own question, then the similar ones (best first).
-  const items: BankEntry[] = useMemo(() => (origin ? [origin, ...origin.question.similarIds.flatMap((sid) => byId.get(sid) ?? []).slice(0, SIMILAR_COUNT)] : []), [origin, byId]);
+  const items: BankEntry[] = useMemo(() => (origin ? [origin, ...similarQuery.entries.slice(0, SIMILAR_COUNT)] : []), [origin, similarQuery.entries]);
+  const selectedEntries = useEntries(selected);
   const last = items.length - 1;
   const index = Math.min(Math.max(Number(params.get("i") ?? 1) || 0, 0), Math.max(last, 0));
   const current = items[index];
@@ -65,7 +72,7 @@ export function SimilarPage() {
   // Back to the list where the student was (or the list itself when opened from a link)
   const back = () => (location.key !== "default" ? navigate(-1) : navigate("/"));
 
-  if (bank.isLoading)
+  if (originQuery.isLoading || similarQuery.isLoading)
     return (
       <div className="grid gap-4">
         <Skeleton className="h-10 w-64" />
@@ -88,6 +95,7 @@ export function SimilarPage() {
     <div className={cn("grid grid-cols-[minmax(0,1fr)] gap-4", selected.length > 0 && "pb-20")}>
       {/* Header */}
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+        {!isAdmin && <Logo compact />}
         <Button variant="outline" className="gap-1.5" onClick={back}>
           <ArrowLeft className="size-4" /> Back to questions
         </Button>
@@ -99,7 +107,7 @@ export function SimilarPage() {
 
       <div className="grid grid-cols-[minmax(0,1fr)] items-start gap-4 lg:grid-cols-[300px_minmax(0,1fr)] lg:gap-6">
         {/* List */}
-        <nav aria-label="Similar questions" className="lg:sticky lg:top-20">
+        <nav aria-label="Similar questions" className="lg:sticky lg:top-[calc(var(--header-h)+1rem)]">
           <div role="tablist" className="panel-scroll flex gap-2 overflow-x-auto rounded-2xl border bg-card p-2 lg:max-h-[calc(100vh-7rem)] lg:flex-col lg:overflow-x-visible lg:overflow-y-auto">
             {items.map((e, k) => {
               const on = k === index;
@@ -174,7 +182,7 @@ export function SimilarPage() {
       </div>
 
       {/* Same bottom bar as the questions page: what is picked for the PDF */}
-      <SelectionBar ids={selected} byId={byId} />
+      <SelectionBar ids={selected} byId={selectedEntries.byId} />
     </div>
   );
 }

@@ -9,6 +9,7 @@ import { StorageService } from '../storage/storage.service.js';
 import { detailsFromAi, detailsFromFilename, type DetectedDetails } from './paper-details.js';
 import { paperKeys } from './paper-keys.js';
 import type { QuestionEdit, QuestionImage } from './paper.types.js';
+import { BankSearchService } from './bank-search.service.js';
 import { PapersRepository } from './papers.repository.js';
 import { SimilarityService } from '../similarity/similarity.service.js';
 
@@ -59,6 +60,7 @@ export class PapersService {
     private readonly repo: PapersRepository,
     private readonly similarity: SimilarityService,
     @Inject(EXTRACTION_PROVIDER) private readonly ai: ExtractionProvider,
+    private readonly bankSearch: BankSearchService,
   ) {}
 
   /**
@@ -181,6 +183,9 @@ export class PapersService {
     if (!(await this.repo.paperExists(slug))) throw new NotFoundException(`Paper ${slug} not found`);
     const pending = await this.repo.publish(slug);
     if (pending > 0) throw new ConflictException(`${pending} question${pending === 1 ? '' : 's'} still need verifying before publishing`);
+    // searchable words for the new paper (the student bank searches them in MySQL)
+    const paperId = await this.repo.paperDbId(slug);
+    if (paperId) await this.bankSearch.refreshSearchText({ paperId });
     this.invalidateBank();
     await this.repo.audit('PAPER_PUBLISHED', 'paper', await this.repo.paperDbId(slug), { slug });
     // Rebuild vectors + similar-question lists for this subject in the background.
@@ -232,6 +237,7 @@ export class PapersService {
     }
 
     await this.repo.updateQuestion(questionId, row.subject_id, edit as QuestionEdit, newImages, verify);
+    await this.bankSearch.refreshSearchText({ questionIds: [questionId] });
     this.invalidateBank();
     await this.repo.audit(verify ? 'QUESTION_VERIFIED' : 'QUESTION_EDITED', 'question', questionId, { slug, fields: Object.keys(raw as object) });
     return this.repo.questionById(questionId);
@@ -269,28 +275,9 @@ export class PapersService {
 
   // ------------------------------------------------------------------ students
 
-  /**
-   * Every student loads the whole published bank, and the database is on another server (~0.3-0.6 s a query).
-   * So the answer is kept in memory: admin changes clear it straight away, and it is rebuilt at least once a
-   * minute anyway (covers changes made outside the API, e.g. the import CLI).
-   */
-  private bankCache: { at: number; data: ReturnType<PapersRepository['publishedBank']> } | null = null;
-  private static readonly BANK_TTL_MS = 60_000;
-
-  bank() {
-    const c = this.bankCache;
-    if (c && Date.now() - c.at < PapersService.BANK_TTL_MS) return c.data;
-    const data = this.repo.publishedBank();
-    this.bankCache = { at: Date.now(), data };
-    // A failed query must not be cached.
-    data.catch(() => {
-      if (this.bankCache?.data === data) this.bankCache = null;
-    });
-    return data;
-  }
-
+  /** Admin changes: the student bank (server-side search) forgets its cached answers straight away. */
   private invalidateBank() {
-    this.bankCache = null;
+    this.bankSearch.clearCache();
   }
 
   // ------------------------------------------------------------------ helpers

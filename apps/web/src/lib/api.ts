@@ -238,7 +238,10 @@ export const api = {
   restoreQuestion: (paperId: string, questionId: string) =>
     request<void>(`/papers/${encodeURIComponent(paperId)}/questions/${questionId}/restore`, { method: "POST" }),
   /** Published questions for students (no login). */
-  bank: () => request<BankItem[]>("/bank"),
+  // Server-side bank: the browser only ever gets one page (filters / counts / search run on the server)
+  bankGet: <T,>(path: string, params: URLSearchParams) => request<T>(`/bank/${path}?${params}`),
+  bankEntries: (ids: string[]) => request<BankItem[]>("/bank/entries", { method: "POST", body: JSON.stringify({ ids }) }),
+  bankPaper: (paper: string) => request<BankItem[]>(`/bank/entries?paper=${encodeURIComponent(paper)}`),
 };
 
 export function fileUrl(path: string): string {

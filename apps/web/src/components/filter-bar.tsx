@@ -4,7 +4,8 @@ import { YearRange, type Update } from "@/components/bank-filters";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { difficultyLabel } from "@/lib/format";
-import { activeFilterCount, buildFacets, EMPTY_FILTERS, filterEntries, fixChain, splitSubKey, type BankEntry, type FacetOption, type Filters, type MultiKey } from "@/lib/question-bank";
+import { fetchFacets, useBankFacets } from "@/lib/bank-api";
+import { activeFilterCount, EMPTY_FILTERS, splitSubKey, type FacetOption, type Filters, type MultiKey } from "@/lib/question-bank";
 import { cn } from "@/lib/utils";
 
 // ---------------------------------------------------------------- search (an icon until clicked)
@@ -176,36 +177,35 @@ const labelOf = (opts: FacetOption[], v: string) => opts.find((o) => o.value ===
 export const FilterPanel = memo(function FilterPanel({
   open,
   onClose,
-  pool,
   filters,
   onApply,
 }: {
   open: boolean;
   onClose: () => void;
-  pool: BankEntry[];
   filters: Filters;
   onApply: (next: Omit<Filters, "q">) => void;
 }) {
   if (!open) return null;
-  return <PanelBody pool={pool} applied={filters} onClose={onClose} onApply={onApply} />;
+  return <PanelBody applied={filters} onClose={onClose} onApply={onApply} />;
 });
 
 /**
  * The panel's choices are a draft: the question list only changes on "Done" (phones: "Show N questions").
  * Closing with ✕, outside or Esc forgets them.
  */
-function PanelBody({ pool, applied, onClose, onApply }: { pool: BankEntry[]; applied: Filters; onClose: () => void; onApply: (next: Omit<Filters, "q">) => void }) {
+function PanelBody({ applied, onClose, onApply }: { applied: Filters; onClose: () => void; onApply: (next: Omit<Filters, "q">) => void }) {
   const [draft, setDraft] = useState(applied);
   // the search box stays live outside the panel; counts here follow it
   const filters = useMemo(() => ({ ...draft, q: applied.q }), [draft, applied.q]);
   const update: Update = useCallback((next) => setDraft((d) => ({ ...d, ...next })), []);
-  const facets = useMemo(() => buildFacets(pool, filters), [pool, filters]);
-  const resultCount = useMemo(() => filterEntries(pool, filters).length, [pool, filters]);
+  // counts come from the server (whole questions), for the draft choices
+  const { facets } = useBankFacets(filters);
+  const resultCount = facets.total ?? 0;
   const active = activeFilterCount(filters);
   // Picking a subject also sets its board and level; its topics and paper numbers reset with it.
   const onCourse = (course: string | null) => {
-    const e = course ? pool.find((x) => x.meta.subjectCode === course) : undefined;
-    update(e ? { course, board: e.meta.board, level: e.meta.curriculum, topic: [], sub: [], paper: [] } : { course: null, topic: [], sub: [], paper: [] });
+    const o = course ? facets.subjects.find((x) => x.value === course) : undefined;
+    update(o ? { course, board: o.board ?? draft.board, level: o.level ?? draft.level, topic: [], sub: [], paper: [] } : { course: null, topic: [], sub: [], paper: [] });
   };
   const onClear = () => setDraft((d) => ({ ...EMPTY_FILTERS, q: d.q }));
   const apply = () => {
@@ -220,7 +220,17 @@ function PanelBody({ pool, applied, onClose, onApply }: { pool: BankEntry[]; app
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
-  const chain = (next: Partial<Filters>) => update(fixChain(pool, { ...filters, ...next }));
+  // An earlier choice in the chain changed: the server drops later choices that no longer exist under it.
+  const chain = (next: Partial<Filters>) => {
+    const wanted = { ...filters, ...next };
+    update(next);
+    void fetchFacets(wanted, true)
+      .then((r) => {
+        const fx = r.fixed;
+        if (fx) setDraft((d) => (d.board === wanted.board && d.level === wanted.level ? { ...d, level: fx.level, course: fx.course, topic: fx.topic, sub: fx.sub, paper: fx.paper } : d));
+      })
+      .catch(() => {});
+  };
   const toggleMulti = (key: MultiKey, v: string | null) =>
     update({ [key]: v === null ? [] : filters[key].includes(v) ? filters[key].filter((x) => x !== v) : [...filters[key], v] } as Partial<Filters>);
 
@@ -269,7 +279,7 @@ function PanelBody({ pool, applied, onClose, onApply }: { pool: BankEntry[]; app
           </button>
         </div>
 
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
           <Dropdown label="Board" summary={filters.board}>
             {(close) => (
               <OptionList
@@ -346,6 +356,9 @@ function PanelBody({ pool, applied, onClose, onApply }: { pool: BankEntry[]; app
               />
             )}
           </Dropdown>
+          <Dropdown label="Marks" summary={summarize(filters.marks.map((v) => `${v} mark${v === "1" ? "" : "s"}`))}>
+            {() => <OptionList multi allLabel="Any marks" options={facets.marks} selected={filters.marks} onPick={(v) => toggleMulti("marks", v)} />}
+          </Dropdown>
         </div>
 
         <div className="flex items-center gap-2">
@@ -375,7 +388,7 @@ export function FiltersButton({ open, active, onClick }: { open: boolean; active
   return (
     <Button variant="outline" aria-expanded={open} onClick={onClick} className={cn("h-10 shrink-0 gap-1.5 sm:h-9", (open || active > 0) && "border-primary/40 bg-primary/5 text-primary hover:bg-primary/10")}>
       <SlidersHorizontal className="size-4" />
-      Filters
+      <span className="max-sm:sr-only">Filters</span>
       {active > 0 && <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-primary px-1 text-[11px] font-bold text-primary-foreground">{active}</span>}
     </Button>
   );

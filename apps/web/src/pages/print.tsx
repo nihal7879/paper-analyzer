@@ -2,7 +2,8 @@ import { useEffect, useMemo } from "react";
 import { useSearchParams } from "react-router";
 import { MathText } from "@/components/math-text";
 import { fileUrl, sourceLine, type AnswerMode } from "@/lib/api";
-import { useQuestionBank, type BankEntry } from "@/lib/question-bank";
+import { useEntries, usePaperEntries } from "@/lib/bank-api";
+import type { BankEntry } from "@/lib/question-bank";
 
 declare global {
   interface Window {
@@ -18,16 +19,15 @@ declare global {
  */
 export function PrintPage() {
   const [params] = useSearchParams();
-  const bank = useQuestionBank();
   const answers = (["none", "end", "inline"].includes(params.get("answers") ?? "") ? params.get("answers") : "none") as AnswerMode;
   const paperId = params.get("paper");
   const idList = useMemo(() => (params.get("ids") ?? "").split(",").filter(Boolean), [params]);
 
-  const items = useMemo<BankEntry[]>(() => {
-    if (paperId) return bank.entries.filter((e) => e.meta.id === paperId).sort((a, b) => a.order - b.order);
-    const byId = new Map(bank.entries.map((e) => [e.question.id, e]));
-    return idList.flatMap((id) => byId.get(id) ?? []);
-  }, [bank.entries, paperId, idList]);
+  // Only the questions in this PDF are asked from the server (selected ids, in order, or one whole paper).
+  const paper = usePaperEntries(paperId);
+  const picked = useEntries(paperId ? [] : idList);
+  const loading = paper.isLoading || picked.isLoading;
+  const items = useMemo<BankEntry[]>(() => (paperId ? [...paper.entries].sort((a, b) => a.order - b.order) : picked.entries), [paperId, paper.entries, picked.entries]);
 
   const title = params.get("title") || (paperId && items[0] ? sourceLine(items[0].meta) : "Practice questions");
   const marks = items.reduce((s, e) => s + (e.question.marks ?? 0), 0);
@@ -47,7 +47,7 @@ export function PrintPage() {
 
   // Ready once the data is in, every image has loaded (or failed) and KaTeX fonts are loaded.
   useEffect(() => {
-    if (bank.isLoading) return;
+    if (loading) return;
     let cancelled = false;
     (async () => {
       await Promise.all(
@@ -68,9 +68,9 @@ export function PrintPage() {
     return () => {
       cancelled = true;
     };
-  }, [bank.isLoading, items, params]);
+  }, [loading, items, params]);
 
-  if (bank.isLoading) return <p className="p-10 text-sm">Loading…</p>;
+  if (loading) return <p className="p-10 text-sm">Loading…</p>;
   if (items.length === 0) return <p className="p-10 text-sm">No published questions found for this PDF.</p>;
 
   return (
@@ -99,7 +99,7 @@ export function PrintPage() {
                   key={k}
                   src={fileUrl(img.path)}
                   alt=""
-                  className="max-h-[360px] object-contain"
+                  className="mx-auto block max-h-[360px] object-contain"
                   style={{ width: `min(100%, ${Math.max(220, Math.round((img.box.x1 - img.box.x0) * 700))}px)` }}
                 />
               ) : null,

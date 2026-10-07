@@ -789,6 +789,7 @@ export function ActiveChips({
     { key: "season", options: facets.seasons },
     { key: "type", options: facets.types },
     { key: "difficulty", options: facets.difficulties, format: (o) => difficultyLabel(o.value as "EASY") },
+    { key: "marks", options: facets.marks },
   ];
   for (const { key, options, format } of groups) {
     for (const v of filters[key]) {

@@ -8,6 +8,7 @@ import { QuestionImage } from "@/components/question-image";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { sourceLine, type PaperMeta, type Question } from "@/lib/api";
 import { baseNumber } from "@/lib/question-bank";
 import { pageImageUrl, type DisplayImage } from "@/lib/review";
@@ -73,18 +74,7 @@ export const QuestionCard = memo(function QuestionCard({
       <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b bg-muted px-4 py-3 text-sm sm:px-5">
         <span className="min-w-0 font-semibold">{sourceLine(meta, grouped ? baseNumber(q.number) : q.number)}</span>
         <div className="ml-auto flex items-center gap-1.5">
-          {/* The question's original exam page (opens in a new tab) */}
-          <a
-            href={pageImageUrl(meta.id, q.page)}
-            target="_blank"
-            rel="noreferrer"
-            className="flex h-8 items-center gap-1.5 rounded-md px-2 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground active:scale-95"
-            title="Open the original exam page"
-          >
-            <FileText className="size-3.5" />
-            Page {pages.join(", ")}
-            <ExternalLink className="size-3" />
-          </a>
+          <ExamPages paperId={meta.id} pages={pages.length ? pages : [q.page]} title={sourceLine(meta, grouped ? baseNumber(q.number) : q.number)} />
           {selectable && (
             <>
               <PaperDownloadMenu meta={meta}>
@@ -140,7 +130,13 @@ export const QuestionCard = memo(function QuestionCard({
             </div>
           </div>
         ) : (
-          <QuestionBody q={q} meta={meta} serial={serial} />
+          // Number in its own column: text, figures, options and answer all line up after it
+          <div className={cn("grid", serial != null && "grid-cols-[auto_minmax(0,1fr)] gap-x-2.5")}>
+            {serial != null && <SerialMark n={serial} />}
+            <div className="grid min-w-0 gap-3.5">
+              <QuestionBody q={q} meta={meta} />
+            </div>
+          </div>
         )}
 
         {/* Similar questions (by meaning, from other papers): a page, a pop-up or inside the card (Settings) */}
@@ -192,6 +188,49 @@ function partLabel(p: CardQuestion, prev: CardQuestion | undefined): string | nu
   let k = 0;
   while (k < tokens.length - 1 && tokens[k] === before[k]) k++;
   return tokens.slice(k).join(" ");
+}
+
+const pageLinkCls =
+  "flex h-8 items-center gap-1.5 rounded-md px-2 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground active:scale-95";
+
+/**
+ * The question's original exam page(s) in a viewer, one under the other (each can still open in its own tab).
+ */
+function ExamPages({ paperId, pages, title }: { paperId: string; pages: number[]; title: string }) {
+  const [open, setOpen] = useState(false);
+  const many = pages.length > 1;
+  return (
+    <>
+      <button type="button" onClick={() => setOpen(true)} className={pageLinkCls} title={many ? `Show the original exam pages (${pages.length})` : "Show the original exam page"}>
+        <FileText className="size-3.5" />
+        {many ? "Pages" : "Page"} {pages.join(", ")}
+        <ExternalLink className="size-3" />
+      </button>
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="flex max-h-[92dvh] w-[min(96vw,860px)] max-w-none flex-col gap-0 overflow-hidden p-0 sm:max-w-none">
+          <div className="flex items-center gap-3 border-b px-4 py-3 pr-12">
+            <DialogTitle className="truncate text-sm font-semibold">{title}</DialogTitle>
+            <span className="shrink-0 text-xs text-muted-foreground">
+              {many ? `${pages.length} pages` : `Page ${pages[0]}`}
+            </span>
+          </div>
+          <div className="grid gap-4 overflow-y-auto bg-muted/50 p-3 sm:p-4">
+            {pages.map((p) => (
+              <figure key={p} className="grid gap-1.5">
+                <figcaption className="flex items-center justify-between text-xs font-medium text-muted-foreground">
+                  Page {p}
+                  <a href={pageImageUrl(paperId, p)} target="_blank" rel="noreferrer" className="flex items-center gap-1 rounded px-1.5 py-0.5 hover:bg-muted hover:text-foreground">
+                    Open <ExternalLink className="size-3" />
+                  </a>
+                </figcaption>
+                <img src={pageImageUrl(paperId, p)} alt={`Exam page ${p}`} loading="lazy" className="w-full rounded-md border bg-white shadow-sm" />
+              </figure>
+            ))}
+          </div>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
 }
 
 function SerialMark({ n }: { n: number }) {

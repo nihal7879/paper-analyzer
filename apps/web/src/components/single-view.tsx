@@ -1,31 +1,36 @@
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { useEffect, useRef } from "react";
-import { QuestionCard, type SimilarItem } from "@/components/question-card";
+import { QuestionCard } from "@/components/question-card";
 import { Button } from "@/components/ui/button";
-import type { CardQuestion } from "@/components/question-card";
-import type { QuestionGroup } from "@/lib/question-bank";
+import type { ListGroup } from "@/lib/bank-api";
 
 /**
  * One question at a time: ‹ › buttons, ← → keys, swipe left / right on phones, and a progress bar.
  */
 export function SingleQuestionView({
   results,
-  partQuestions,
+  total,
+  onNeedMore,
   index,
   onIndex,
-  similarById,
 }: {
-  results: QuestionGroup[];
-  partQuestions: Map<string, CardQuestion[]>;
+  /** The questions loaded so far (pages of 20). */
+  results: ListGroup[];
+  /** How many questions match in all. */
+  total: number;
+  /** Load the next page (called a few questions before the end of what is loaded). */
+  onNeedMore: () => void;
   index: number;
   onIndex: (i: number) => void;
-  similarById: Map<string, SimilarItem[]>;
 }) {
-  const total = results.length;
-  const i = Math.min(index, total - 1);
+  const loaded = results.length;
+  const i = Math.min(index, loaded - 1);
   const current = results[i];
+  useEffect(() => {
+    if (loaded < total && i >= loaded - 3) onNeedMore();
+  }, [i, loaded, total, onNeedMore]);
   const go = (k: number) => {
-    if (k < 0 || k >= total) return;
+    if (k < 0 || k >= loaded) return;
     onIndex(k);
     // keep the question's top in view after moving
     const top = topRef.current?.getBoundingClientRect().top ?? 0;
@@ -59,7 +64,7 @@ export function SingleQuestionView({
         <button type="button" className={arrow} onClick={() => go(i - 1)} disabled={i === 0} aria-label="Previous question">
           <ChevronLeft className="size-5" />
         </button>
-        <button type="button" className={arrow} onClick={() => go(i + 1)} disabled={i === total - 1} aria-label="Next question">
+        <button type="button" className={arrow} onClick={() => go(i + 1)} disabled={i >= loaded - 1} aria-label="Next question">
           <ChevronRight className="size-5" />
         </button>
         <span className="text-sm font-medium tabular-nums">
@@ -90,9 +95,9 @@ export function SingleQuestionView({
         <QuestionCard
           question={current.question}
           meta={current.meta}
-          parts={partQuestions.get(current.key)}
+          parts={current.partQuestions}
           matched={current.matched}
-          similar={similarById.get(current.key)}
+          similar={current.similar}
           selectable
           serial={i + 1}
         />
@@ -102,7 +107,7 @@ export function SingleQuestionView({
         <Button variant="outline" size="lg" className="flex-1 gap-1.5 sm:flex-none" onClick={() => go(i - 1)} disabled={i === 0}>
           <ChevronLeft className="size-4" /> Previous
         </Button>
-        <Button size="lg" className="flex-1 gap-1.5 sm:ml-auto sm:flex-none" onClick={() => go(i + 1)} disabled={i === total - 1}>
+        <Button size="lg" className="flex-1 gap-1.5 sm:ml-auto sm:flex-none" onClick={() => go(i + 1)} disabled={i >= loaded - 1}>
           Next question <ChevronRight className="size-4" />
         </Button>
       </div>

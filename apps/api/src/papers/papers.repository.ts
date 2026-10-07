@@ -477,15 +477,22 @@ export class PapersRepository {
 
   // ------------------------------------------------------------------ student question bank
 
-  /** All published questions with their paper details (Phase 0: filtered in the browser). */
-  async publishedBank(): Promise<{ meta: PaperMeta; question: Question; order: number }[]> {
-    const papers = await this.paperQuery().where('p.status', 'PUBLISHED');
-    if (!papers.length) return [];
+  /**
+   * Published questions chosen by `pick` (e.g. by id, or by paper + question number), with paper details.
+   * Used by the server-side bank (pages of results, similar questions, PDF selection, print).
+   */
+  async publishedEntries(pick: (qb: Knex.QueryBuilder) => void): Promise<{ meta: PaperMeta; question: Question; order: number; paperId: number }[]> {
+    const base = this.db('questions as q')
+      .join('papers as pp', 'pp.id', 'q.paper_id')
+      .where('pp.status', 'PUBLISHED')
+      .whereNull('q.deleted_at')
+      .where('q.status', 'PUBLISHED');
+    pick(base);
+    const loaded = await this.loadQuestions(base);
+    if (!loaded.length) return [];
+    const papers = await this.paperQuery().whereIn('p.id', [...new Set(loaded.map((l) => l.paperId))]);
     const byId = new Map(papers.map((r) => [r.dbId, this.toMeta(r)]));
-    const loaded = await this.loadQuestions(
-      this.db('questions as q').whereIn('q.paper_id', [...byId.keys()]).whereNull('q.deleted_at').where('q.status', 'PUBLISHED'),
-    );
-    return loaded.map(({ question, paperId, order }) => ({ meta: byId.get(paperId)!, question, order }));
+    return loaded.map(({ question, paperId, order }) => ({ meta: byId.get(paperId)!, question, order, paperId }));
   }
 
   // ------------------------------------------------------------------ helpers

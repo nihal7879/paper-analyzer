@@ -19,6 +19,7 @@ Rules:
 - MCQ: put the stem in "text" and each option in "options" with labels A, B, C, D.
 - Marks: read the number in square brackets at the end of the part, e.g. [3]. For MCQ use 1.
 - diagrams: tight bounding box around each figure, graph, circuit or table that belongs to the question (fractions of the page, top-left origin). Do not include the question text in the box. Empty array if none.
+- tables: one form only, never both. If a table is cropped cleanly in diagrams, do not also write it in the text. Only when a clean crop is not possible, write it in the text as a Markdown table (keep empty columns as empty cells) and leave it out of diagrams.
 - topic_code/topic: choose ONLY from this syllabus topic list:
 ${topicList}
 - subtopic: if the chosen topic lists subtopics, copy the best-fitting one EXACTLY as written. Only if none fits, write a short, specific syllabus subtopic (e.g. "Momentum and impulse").

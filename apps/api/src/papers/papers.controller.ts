@@ -20,6 +20,7 @@ import { FileFieldsInterceptor, FileInterceptor } from '@nestjs/platform-express
 import type { Response } from 'express';
 import { AdminGuard } from '../auth/admin.guard.js';
 import { PdfService, type PdfQuery } from '../pdf/pdf.service.js';
+import { BankSearchService } from './bank-search.service.js';
 import { PapersService } from './papers.service.js';
 
 const MAX_PDF_BYTES = 50 * 1024 * 1024;
@@ -124,17 +125,46 @@ export class PapersController {
   }
 }
 
-/** Students: published questions only (no login). */
+/** Students: published questions only (no login). Filtering, counts, search and paging run on the server. */
 @Controller('bank')
 export class BankController {
   constructor(
     private readonly papers: PapersService,
     private readonly pdf: PdfService,
+    private readonly bankSearch: BankSearchService,
   ) {}
 
-  @Get()
-  bank() {
-    return this.papers.bank();
+  /** One page of whole questions (?offset=0&limit=20 + the same filters as the website URL). */
+  @Get('search')
+  search(@Query() q: Record<string, unknown>) {
+    const { f, sort, offset, limit } = this.bankSearch.parse(q);
+    return this.bankSearch.page(f, sort, offset, limit);
+  }
+
+  /** Dropdown options with whole-question counts; ?fix=1 also returns the filters with stale chain choices dropped. */
+  @Get('facets')
+  facets(@Query() q: Record<string, unknown>) {
+    return this.bankSearch.facets(this.bankSearch.parse(q).f, q.fix === '1');
+  }
+
+  /** Every part id of the matching questions (Select all). */
+  @Get('ids')
+  ids(@Query() q: Record<string, unknown>) {
+    return this.bankSearch.ids(this.bankSearch.parse(q).f);
+  }
+
+  /** Published questions by id (?ids=1,2,3) or a whole paper (?paper=slug). */
+  @Get('entries')
+  entries(@Query('ids') ids?: string, @Query('paper') paper?: string) {
+    return this.bankSearch.entries({ ids: ids ? ids.split(',') : [], paper });
+  }
+
+  /** Same, for long id lists (a big PDF selection). */
+  @Post('entries')
+  @HttpCode(200)
+  entriesPost(@Body() body: { ids?: unknown }) {
+    const ids = Array.isArray(body?.ids) ? body.ids.map(String) : [];
+    return this.bankSearch.entries({ ids });
   }
 
   /** PDF of selected questions (?ids=1,2,3) or a whole paper (?paper=slug), with answers none | end | inline. */

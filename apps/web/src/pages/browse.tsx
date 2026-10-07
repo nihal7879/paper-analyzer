@@ -4,9 +4,11 @@ import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } f
 import { Link, useLocation, useNavigationType, useSearchParams } from "react-router";
 import { ActiveChips } from "@/components/bank-filters";
 import { FilterPanel, FiltersButton, SearchToggle } from "@/components/filter-bar";
+import { SettingsMenu } from "@/components/settings-menu";
+import { Logo, ThemeToggle } from "@/components/top-bar";
 import { warmMath } from "@/components/math-text";
 import { SelectionBar } from "@/components/pdf-download";
-import { QuestionCard, type SimilarItem } from "@/components/question-card";
+import { QuestionCard } from "@/components/question-card";
 import { SingleQuestionView } from "@/components/single-view";
 import { useViewMode } from "@/lib/preferences";
 import { Button } from "@/components/ui/button";
@@ -16,26 +18,10 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useAdmin } from "@/lib/admin";
 import { api } from "@/lib/api";
 import { selection, useSelection } from "@/lib/selection";
-import {
-  activeFilterCount,
-  buildFacets,
-  EMPTY_FILTERS,
-  filterEntries,
-  filtersFromParams,
-  filtersToParams,
-  rememberCourse,
-  buildPartIndex,
-  groupResults,
-  sortEntries,
-  useQuestionBank,
-  type Filters,
-  type SortKey,
-} from "@/lib/question-bank";
+import { fetchIds, PAGE_SIZE, useBankFacets, useBankPages, useEntries } from "@/lib/bank-api";
+import { activeFilterCount, EMPTY_FILTERS, filtersFromParams, filtersToParams, rememberCourse, type Filters, type SortKey } from "@/lib/question-bank";
 import { cn } from "@/lib/utils";
 
-const PAGE_SIZE = 20;
-const FIRST_PAINT = 6;
-const SHOWN_KEY = "pa.shown";
 const ANCHOR_KEY = "pa.anchor";
 const HEADER_PX = 72;
 
@@ -64,21 +50,6 @@ const SORT_ITEMS: { value: SortKey; label: string }[] = [
 export function BrowsePage() {
   const { isAdmin } = useAdmin();
   const [params, setParams] = useSearchParams();
-  // How many cards are loaded survives a trip to another page and back (so Back lands on the same card).
-  const [shown, setShown] = useState(() => {
-    try {
-      return Math.max(PAGE_SIZE, Number(sessionStorage.getItem(SHOWN_KEY)) || 0);
-    } catch {
-      return PAGE_SIZE;
-    }
-  });
-  useEffect(() => {
-    try {
-      sessionStorage.setItem(SHOWN_KEY, String(shown));
-    } catch {
-      // private mode
-    }
-  }, [shown]);
 
   // Filters live in state (instant); the URL is updated a moment later so a click never waits for the router.
   const [filters, setFilters] = useState<Filters>(() => filtersFromParams(params));
@@ -87,76 +58,49 @@ export function BrowsePage() {
     const t = setTimeout(() => setParams(filtersToParams(filters, sort), { replace: true, preventScrollReset: true }), 300);
     return () => clearTimeout(t);
   }, [filters, sort, setParams]);
-  // The sidebar reacts instantly; the (heavier) results list catches up a frame later.
-  const deferredFilters = useDeferredValue(filters);
-  const deferredSort = useDeferredValue(sort);
-  const updating = deferredFilters !== filters || deferredSort !== sort;
+  // Typing in search waits a moment before asking the server (fewer requests while typing)
+  const [typedQ, setTypedQ] = useState(filters.q);
+  useEffect(() => {
+    if (typedQ === filters.q) return;
+    const t = setTimeout(() => setFilters((f) => ({ ...f, q: typedQ })), 250);
+    return () => clearTimeout(t);
+  }, [typedQ, filters.q]);
   const selected = useSelection();
   // "All" (list, the default) or "One at a time" — chosen in Settings (⚙), remembered on this device.
   // Deferred: the Settings switch moves at once; the page re-draws right after, without blocking it.
   const viewMode = useDeferredValue(useViewMode());
   const [singleIndex, setSingleIndex] = useState(0);
 
-  const bank = useQuestionBank();
-  // The bank only contains published questions (students never see drafts).
-  const pool = bank.entries;
+  // The server filters, counts, sorts and searches; the browser gets 20 whole questions at a time.
+  const list = useBankPages(filters, sort);
+  const groups = list.groups;
+  const total = list.total;
+  const { facets, isFetching: facetsFetching } = useBankFacets(filters);
   // Admins: how many papers are waiting to be published (for the empty-state hint).
   const adminPapers = useQuery({ queryKey: ["papers"], queryFn: api.papers, enabled: isAdmin });
   const unpublishedCount = (adminPapers.data ?? []).filter((p) => p.meta.paperState !== "PUBLISHED").length;
 
   // A remembered / linked course that has no published questions is ignored.
-  const knownCourse = !filters.course || pool.length === 0 || pool.some((e) => e.meta.subjectCode === filters.course);
+  const knownCourse = !filters.course || facetsFetching || facets.subjects.length === 0 || facets.subjects.some((o) => o.value === filters.course);
   useEffect(() => {
     if (!knownCourse) setFilters((f) => ({ ...f, course: null }));
   }, [knownCourse]);
-  const facets = useMemo(() => buildFacets(pool, filters), [pool, filters]);
-  // Typeset every question's maths in idle time once the bank loads, so searching / filtering only reuses it.
+  // Typeset the loaded questions' maths in idle time, so scrolling and re-filtering reuse it.
   useEffect(() => {
-    if (pool.length === 0) return;
     const texts: string[] = [];
-    for (const e of sortEntries(pool, "newest")) {
-      texts.push(e.question.text, ...e.question.options.map((o) => o.text));
-      if (e.question.answer?.text) texts.push(e.question.answer.text);
-    }
-    return warmMath(texts);
-  }, [pool]);
-  // Parts (a), (b), (c)… of one paper question are shown together as one whole question, like the paper.
-  const partIndex = useMemo(() => buildPartIndex(pool), [pool]);
-  const partQuestions = useMemo(() => new Map([...partIndex].map(([k, list]) => [k, list.map((p) => p.question)])), [partIndex]);
-  const results = useMemo(
-    () => groupResults(sortEntries(filterEntries(pool, deferredFilters), deferredSort), partIndex),
-    [pool, deferredFilters, deferredSort, partIndex],
-  );
-  // Question id -> entry, to turn each question's similarIds into cards (published questions only).
-  const byId = useMemo(() => new Map(pool.map((e) => [e.question.id, e])), [pool]);
-  // Resolved once per bank load, so every card gets the same array each render (cards are memoised).
-  // Keyed by whole question: the best matches of all its parts (not its own parts), up to 5.
-  const similarById = useMemo(() => {
-    const m = new Map<string, SimilarItem[]>();
-    for (const [k, parts] of partIndex) {
-      const own = new Set(parts.map((p) => p.question.id));
-      const seen = new Set<string>();
-      const list: SimilarItem[] = [];
-      // round-robin over the parts so each part's best match comes first
-      const lists = parts.map((p) => p.question.similarIds);
-      for (let r = 0; list.length < 5 && lists.some((l) => r < l.length); r++)
-        for (const l of lists) {
-          const s = l[r] ? byId.get(l[r]) : undefined;
-          if (!s || own.has(s.question.id) || seen.has(s.question.id) || list.length >= 5) continue;
-          seen.add(s.question.id);
-          list.push({ key: s.key, meta: s.meta, question: s.question });
-        }
-      m.set(k, list);
-    }
-    return m;
-  }, [partIndex, byId]);
-  // New results: draw what fits on screen first, the rest of the page one frame later (feels instant).
-  // (The first list after the page appears is drawn in full, so Back can restore the scroll position.)
-  const [renderLimit, setRenderLimit] = useState(Infinity);
-  const firstList = useRef(true);
+    for (const g of groups)
+      for (const p of g.parts) {
+        texts.push(p.question.text, ...p.question.options.map((o) => o.text));
+        if (p.question.answer?.text) texts.push(p.question.answer.text);
+      }
+    if (texts.length) return warmMath(texts);
+  }, [groups]);
+  // Every part id of the matching questions (Select all) — a light list of ids from the server.
+  const idsQuery = useQuery({ queryKey: ["bank-ids", filtersToParams(filters, "newest").toString()], queryFn: () => fetchIds(filters), enabled: total > 0, staleTime: 60_000 });
+  const selectedEntries = useEntries(selected);
 
   // Back from another page (e.g. Similar questions): put the same card back at the same spot.
-  // (Cards far off screen are drawn lazily with an estimated height, so a pixel scroll position isn't reliable.)
+  // (The pages already loaded stay in memory for a while, so the same cards are there.)
   const navType = useNavigationType();
   // Remember the top card while scrolling (once per frame at most); leaving the page then needs nothing extra.
   useEffect(() => {
@@ -177,7 +121,7 @@ export function BrowsePage() {
   const location = useLocation();
   const restoredFor = useRef<string | null>(null);
   useEffect(() => {
-    if (!results.length || navType !== "POP" || restoredFor.current === location.key) return;
+    if (!groups.length || navType !== "POP" || restoredFor.current === location.key) return;
     let anchor: { key: string; top: number } | null = null;
     try {
       anchor = JSON.parse(sessionStorage.getItem(ANCHOR_KEY) ?? "null");
@@ -189,8 +133,7 @@ export function BrowsePage() {
       const el = document.querySelector<HTMLElement>(`[data-card-key="${CSS.escape(anchor!.key)}"]`);
       if (el) window.scrollTo({ top: window.scrollY + el.getBoundingClientRect().top - anchor!.top, behavior: "instant" });
     };
-    // now, and again once the page has settled (lazy cards / images above change heights).
-    // If the list re-renders meanwhile, this simply runs again; it is marked done after the last step.
+    // now, and again once the page has settled (lazy cards / images above change heights)
     const timers = [0, 120, 300, 700].map((ms, i, all) =>
       window.setTimeout(() => {
         place();
@@ -198,22 +141,7 @@ export function BrowsePage() {
       }, ms),
     );
     return () => timers.forEach(clearTimeout);
-  }, [results, navType, location.key]);
-  useEffect(() => {
-    if (firstList.current) {
-      if (results.length) firstList.current = false;
-      return;
-    }
-    setRenderLimit(FIRST_PAINT);
-    let timer = 0;
-    const frame = requestAnimationFrame(() => {
-      timer = window.setTimeout(() => setRenderLimit(Infinity), 0);
-    });
-    return () => {
-      cancelAnimationFrame(frame);
-      clearTimeout(timer);
-    };
-  }, [results]);
+  }, [groups, navType, location.key]);
   const firstResults = useRef(true);
   useEffect(() => {
     if (firstResults.current) {
@@ -221,7 +149,7 @@ export function BrowsePage() {
       return;
     }
     setSingleIndex(0);
-  }, [deferredFilters, deferredSort]);
+  }, [filters, sort]);
   // Switching in Settings keeps your place: the list's top card becomes "question N", and back again.
   const prevMode = useRef(viewMode);
   const lastTopIndex = useRef(0);
@@ -233,7 +161,7 @@ export function BrowsePage() {
       frame = requestAnimationFrame(() => {
         frame = 0;
         const top = [...document.querySelectorAll<HTMLElement>("[data-card-key]")].find((el) => el.getBoundingClientRect().bottom > 80);
-        const k = top ? results.findIndex((e) => e.key === top.dataset.cardKey) : -1;
+        const k = top ? groups.findIndex((e) => e.key === top.dataset.cardKey) : -1;
         if (k >= 0) lastTopIndex.current = k;
       });
     };
@@ -242,51 +170,53 @@ export function BrowsePage() {
       window.removeEventListener("scroll", onScroll);
       cancelAnimationFrame(frame);
     };
-  }, [viewMode, results]);
+  }, [viewMode, groups]);
   useEffect(() => {
     if (prevMode.current === viewMode) return;
     prevMode.current = viewMode;
     if (viewMode === "single") setSingleIndex(lastTopIndex.current);
     else {
-      const key = results[singleIndex]?.key;
-      setShown((n) => Math.max(n, singleIndex + PAGE_SIZE));
+      const key = groups[singleIndex]?.key;
       if (key) requestAnimationFrame(() => document.querySelector(`[data-card-key="${CSS.escape(key)}"]`)?.scrollIntoView({ block: "start" }));
     }
-  }, [viewMode, results, singleIndex]);
-  const searching = filters.q.trim() !== "" && (updating || deferredFilters.q !== filters.q);
-  const visible = results.slice(0, Math.min(shown, renderLimit));
-  const pageCount = Math.min(shown, results.length);
-  const paperCount = useMemo(() => new Set(results.map((r) => r.meta.id)).size, [results]);
+  }, [viewMode, groups, singleIndex]);
+  const searching = typedQ.trim() !== "" && (typedQ !== filters.q || list.isUpdating);
   const active = activeFilterCount(filters);
   const selectedSet = useMemo(() => new Set(selected), [selected]);
-  const resultIds = useMemo(() => results.flatMap((r) => r.parts.map((p) => p.question.id)), [results]);
+  const resultIds = idsQuery.data?.ids ?? [];
   const allResultsSelected = resultIds.length > 0 && resultIds.every((id) => selectedSet.has(id));
+  const selectAll = async () => {
+    const ids = idsQuery.data?.ids ?? (await fetchIds(filters)).ids;
+    (allResultsSelected ? selection.removeMany : selection.addMany)(ids);
+  };
 
   const update = useCallback((next: Partial<Filters>, nextSort?: SortKey) => {
     setFilters((f) => ({ ...f, ...next }));
+    if (next.q !== undefined) setTypedQ(next.q);
     if (nextSort) setSort(nextSort);
-    setShown(PAGE_SIZE);
   }, []);
   // "Clear all" clears every side-panel filter (board, level, subject too); the search box stays.
   const clearAll = useCallback(() => {
     rememberCourse(null);
     setFilters((f) => ({ ...EMPTY_FILTERS, q: f.q }));
-    setShown(PAGE_SIZE);
   }, []);
   const setCourse = useCallback(
     (course: string | null) => {
       rememberCourse(course);
       // Picking a subject also sets its board and level (so all three filters agree);
       // topics and paper numbers belong to a course, so they reset with it.
-      const e = course ? pool.find((x) => x.meta.subjectCode === course) : undefined;
-      update(e ? { course, board: e.meta.board, level: e.meta.curriculum, topic: [], sub: [], paper: [] } : { course: null, topic: [], sub: [], paper: [] });
+      const o = course ? facets.subjects.find((x) => x.value === course) : undefined;
+      update(o ? { course, board: o.board ?? null, level: o.level ?? null, topic: [], sub: [], paper: [] } : { course: null, topic: [], sub: [], paper: [] });
     },
-    [update, pool],
+    [update, facets.subjects],
   );
-  const setQuery = useCallback((q: string) => update({ q }), [update]);
+  const setQuery = useCallback((q: string) => setTypedQ(q), []);
+  const clearQuery = useCallback(() => update({ q: "" }), [update]);
   // Search is an icon until clicked; filters open in a panel from the "Filters" button.
   const [searchOpen, setSearchOpen] = useState(() => filters.q !== "");
   const [filtersOpen, setFiltersOpen] = useState(false);
+  // phones: while the logo shows the app name, the count steps aside to make room
+  const [logoName, setLogoName] = useState(false);
   const closeFilters = useCallback(() => setFiltersOpen(false), []);
   // "Done" in the filter panel: its choices replace the current ones (the search text stays).
   const applyFilters = useCallback(
@@ -296,7 +226,6 @@ export function BrowsePage() {
     },
     [update],
   );
-
 
   return (
     <div className="grid grid-cols-[minmax(0,1fr)] gap-4">
@@ -308,31 +237,36 @@ export function BrowsePage() {
         <section className={cn("grid min-w-0 gap-4", selected.length > 0 && "pb-20")}>
           {/* Toolbar: count · 🔍 · Filters · Select all · Sort */}
           <div className="flex items-center gap-2">
-            <p className={cn("mr-auto shrink-0 text-sm text-muted-foreground", (searchOpen || filters.q) && "max-sm:hidden")}>
-              {!bank.isLoading && (
+            {!isAdmin && (
+              <div className={cn("mr-1 sm:mr-2", logoName && "max-sm:mr-auto", (searchOpen || typedQ) && "max-sm:hidden")}>
+                <Logo compact onNameShown={setLogoName} />
+              </div>
+            )}
+            <p className={cn("mr-auto shrink-0 text-sm text-muted-foreground", (searchOpen || typedQ || logoName) && "max-sm:hidden")}>
+              {!list.isLoading && (
                 <>
-                  <span className="font-semibold text-foreground">{results.length}</span> question{results.length === 1 ? "" : "s"}
-                  {results.length > 0 && (
+                  <span className="font-semibold text-foreground">{total}</span> question{total === 1 ? "" : "s"}
+                  {total > 0 && (
                     <span className="hidden sm:inline">
                       {" "}
-                      · {paperCount} paper{paperCount === 1 ? "" : "s"}
+                      · {list.papers} paper{list.papers === 1 ? "" : "s"}
                     </span>
                   )}
                 </>
               )}
             </p>
-            <SearchToggle value={filters.q} onChange={setQuery} open={searchOpen} onOpenChange={setSearchOpen} />
+            <SearchToggle value={typedQ} onChange={setQuery} open={searchOpen} onOpenChange={setSearchOpen} />
             <FiltersButton open={filtersOpen} active={active} onClick={() => setFiltersOpen((o) => !o)} />
-            {results.length > 0 && (
+            {total > 0 && (
               <Button
                 variant="outline"
                 className="h-10 shrink-0 gap-1.5 max-md:hidden sm:h-9"
                 aria-label={allResultsSelected ? "Unselect all" : "Select all"}
-                onClick={() => (allResultsSelected ? selection.removeMany : selection.addMany)(resultIds)}
+                onClick={() => void selectAll()}
                 title="Add every question in this list to the PDF"
               >
                 <CheckCheck className="size-4" />
-                {allResultsSelected ? "Unselect all" : `Select all ${results.length}`}
+                {allResultsSelected ? "Unselect all" : `Select all ${total}`}
               </Button>
             )}
             <Select items={SORT_ITEMS} value={sort} onValueChange={(v) => update({}, (v as SortKey) ?? "newest")}>
@@ -350,18 +284,25 @@ export function BrowsePage() {
                 ))}
               </SelectContent>
             </Select>
+            {!isAdmin && (
+              <>
+                <SettingsMenu />
+                {/* phones: light / dark lives in Settings */}
+                <ThemeToggle className="max-sm:hidden" />
+              </>
+            )}
           </div>
 
-          <FilterPanel open={filtersOpen} onClose={closeFilters} pool={pool} filters={filters} onApply={applyFilters} />
+          <FilterPanel open={filtersOpen} onClose={closeFilters} filters={filters} onApply={applyFilters} />
 
           {/* Search feedback: "searching…" while typing, then a clear "found N" (or nothing found) */}
-          {filters.q.trim() !== "" && !bank.isLoading && (
+          {typedQ.trim() !== "" && !list.isLoading && (
             <div
-              key={searching ? "searching" : `done-${filters.q.trim()}-${results.length}`}
+              key={searching ? "searching" : `done-${filters.q.trim()}-${total}`}
               role="status"
               className={cn(
                 "fade-in flex items-center gap-2 rounded-xl border px-3 py-2 text-sm",
-                searching ? "text-muted-foreground" : results.length ? "border-primary/30 bg-primary/5" : "border-destructive/30 bg-destructive/5",
+                searching ? "text-muted-foreground" : total ? "border-primary/30 bg-primary/5" : "border-destructive/30 bg-destructive/5",
               )}
             >
               {searching ? (
@@ -370,11 +311,11 @@ export function BrowsePage() {
                 </>
               ) : (
                 <>
-                  <CircleCheck className={cn("search-pop size-4 shrink-0", results.length ? "text-primary" : "text-destructive")} />
+                  <CircleCheck className={cn("search-pop size-4 shrink-0", total ? "text-primary" : "text-destructive")} />
                   <span className="min-w-0 truncate">
-                    {results.length ? (
+                    {total ? (
                       <>
-                        <b className="tabular-nums">{results.length}</b> question{results.length === 1 ? "" : "s"} found for <b>“{filters.q.trim()}”</b>
+                        <b className="tabular-nums">{total}</b> question{total === 1 ? "" : "s"} found for <b>“{filters.q.trim()}”</b>
                       </>
                     ) : (
                       <>
@@ -382,7 +323,7 @@ export function BrowsePage() {
                       </>
                     )}
                   </span>
-                  <button type="button" onClick={() => setQuery("")} className="ml-auto flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground">
+                  <button type="button" onClick={clearQuery} className="ml-auto flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground">
                     <X className="size-3.5" /> Clear
                   </button>
                 </>
@@ -393,17 +334,17 @@ export function BrowsePage() {
 
           <ActiveChips filters={filters} facets={facets} update={update} onClear={clearAll} onCourse={setCourse} />
 
-          {bank.isLoading ? (
+          {list.isLoading ? (
             <div className="grid gap-4">
               {[0, 1, 2].map((i) => (
                 <Skeleton key={i} className="h-64 rounded-xl" />
               ))}
             </div>
-          ) : bank.error ? (
-            <Card className="p-6 text-destructive">{bank.error.message}</Card>
-          ) : pool.length === 0 ? (
+          ) : list.error ? (
+            <Card className="p-6 text-destructive">{list.error.message}</Card>
+          ) : list.bankEmpty ? (
             <EmptyBank isAdmin={isAdmin} hasDrafts={unpublishedCount > 0} />
-          ) : results.length === 0 ? (
+          ) : total === 0 ? (
             <Card className="items-center gap-3 px-6 py-14 text-center">
               <SearchX className="size-8 text-muted-foreground" />
               <p className="font-medium">{filters.q.trim() ? `No questions match “${filters.q.trim()}”` : "No questions match these filters"}</p>
@@ -412,7 +353,7 @@ export function BrowsePage() {
               </p>
               <div className="flex flex-wrap justify-center gap-2">
                 {filters.q.trim() && (
-                  <Button variant="outline" onClick={() => setQuery("")}>
+                  <Button variant="outline" onClick={clearQuery}>
                     Clear search
                   </Button>
                 )}
@@ -429,36 +370,37 @@ export function BrowsePage() {
               </div>
             </Card>
           ) : viewMode === "single" ? (
-            <SingleQuestionView results={results} partQuestions={partQuestions} index={singleIndex} onIndex={setSingleIndex} similarById={similarById} />
+            <SingleQuestionView results={groups} total={total} onNeedMore={list.loadMore} index={singleIndex} onIndex={setSingleIndex} />
           ) : (
             <>
-              <div className={cn("grid gap-4 transition-opacity duration-200", updating && "opacity-60")}>
-                {visible.map((e, n) => (
+              <div className={cn("grid gap-4 transition-opacity duration-200", list.isUpdating && "opacity-60")}>
+                {groups.map((e, n) => (
                   <div key={e.key} className="card-auto" data-card-key={e.key}>
                     <QuestionCard
                       question={e.question}
                       meta={e.meta}
-                      parts={partQuestions.get(e.key)}
+                      parts={e.partQuestions}
                       matched={e.matched}
-                      similar={similarById.get(e.key)}
+                      similar={e.similar}
                       selectable
                       serial={n + 1}
                     />
                   </div>
                 ))}
               </div>
-              <LoadMoreSentinel enabled={pageCount < results.length && renderLimit === Infinity} onVisible={() => setShown((n) => n + PAGE_SIZE)} />
+              <LoadMoreSentinel enabled={list.hasMore && !list.isLoadingMore} onVisible={list.loadMore} />
               <div className="flex flex-col items-center gap-3 py-4">
                 <p className="text-sm text-muted-foreground">
-                  Showing {pageCount} of {results.length}
+                  Showing {groups.length} of {total}
                 </p>
                 <div className="flex gap-2">
-                  {pageCount < results.length && (
-                    <Button size="lg" variant="outline" onClick={() => setShown((n) => n + PAGE_SIZE)}>
-                      Load {Math.min(PAGE_SIZE, results.length - pageCount)} more
+                  {list.hasMore && (
+                    <Button size="lg" variant="outline" onClick={list.loadMore} disabled={list.isLoadingMore} className="gap-1.5">
+                      {list.isLoadingMore && <Loader2 className="size-4 animate-spin" />}
+                      Load {Math.min(PAGE_SIZE, total - groups.length)} more
                     </Button>
                   )}
-                  {pageCount > 5 && (
+                  {groups.length > 5 && (
                     <Button size="lg" variant="ghost" className="gap-1.5" onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}>
                       <ArrowUp className="size-4" /> Back to top
                     </Button>
@@ -472,7 +414,7 @@ export function BrowsePage() {
 
 
 
-      <SelectionBar ids={selected} byId={byId} />
+      <SelectionBar ids={selected} byId={selectedEntries.byId} />
 
     </div>
   );

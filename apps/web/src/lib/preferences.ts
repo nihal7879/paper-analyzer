@@ -58,7 +58,7 @@ export const setSimilarMode = similar.set;
 
 /** Colour theme: teal (default) or the earlier blue. index.html sets it before first paint too. */
 export type ColorTheme = "teal" | "blue" | "grey" | "lavender" | "navy";
-const color = createPref<ColorTheme>("pa.color", ["teal", "blue", "grey", "lavender", "navy"], "teal", (v) => {
+const color = createPref<ColorTheme>("pa.color", ["teal", "blue", "grey", "lavender", "navy"], "lavender", (v) => {
   document.documentElement.dataset.color = v;
 });
 export const useColorTheme = color.use;

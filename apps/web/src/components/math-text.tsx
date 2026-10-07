@@ -1,6 +1,7 @@
 import { memo } from "react";
 import rehypeKatex from "rehype-katex";
 import rehypeStringify from "rehype-stringify";
+import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import remarkParse from "remark-parse";
 import remarkRehype from "remark-rehype";
@@ -10,6 +11,8 @@ import { cn } from "@/lib/utils";
 // Markdown + $LaTeX$ -> HTML. Raw HTML inside the text is dropped (remark-rehype default), so this is safe to inject.
 const processor = unified()
   .use(remarkParse)
+  // tables (| a | b |); single ~ stays plain text (used for "approximately")
+  .use(remarkGfm, { singleTilde: false })
   .use(remarkMath)
   .use(remarkRehype)
   .use(rehypeKatex, { strict: "ignore" }) // bad LaTeX is shown in red, never throws
@@ -22,11 +25,19 @@ const processor = unified()
 const cache = new Map<string, string>();
 const MAX_CACHE = 20_000;
 
+/**
+ * A line that is only `$$ … $$` is a display formula (big, centred, like the paper). Markdown would read it as
+ * small in-line maths, so it is put on its own lines first: `$$\n…\n$$`.
+ */
+function displayLines(text: string): string {
+  return text.replace(/^[ \t]*\$\$([^\n]+?)\$\$[ \t]*$/gm, (_, tex: string) => `$$\n${tex.trim()}\n$$`);
+}
+
 function toHtml(text: string): string {
   let html = cache.get(text);
   if (html === undefined) {
     try {
-      html = String(processor.processSync(text));
+      html = String(processor.processSync(displayLines(text)));
     } catch {
       html = escapeHtml(text);
     }
