@@ -1,12 +1,12 @@
 // Knex config for migrations, seeds and scripts.
-// Reads the shared .env at the repo root (DB_HOST, DB_PORT, DB_USER, DB_PASSWORD, DB_NAME).
+// Reads apps/api/.env (DB_HOST, DB_PORT, DB_USER, DB_PASSWORD, DB_NAME).
 import { existsSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
-const rootEnv = resolve(here, '../../../.env');
-if (existsSync(rootEnv)) process.loadEnvFile(rootEnv);
+const apiEnv = resolve(here, '../.env');
+if (existsSync(apiEnv)) process.loadEnvFile(apiEnv);
 
 const required = ['DB_HOST', 'DB_USER', 'DB_NAME'];
 const missing = required.filter((k) => !process.env[k]);

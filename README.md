@@ -7,7 +7,8 @@ cards with Reveal / Hide answer and the exact source (`Physics · May/June 2026 
 ```
 apps/api   NestJS API  (upload, PDF → images, AI extraction, files on local disk)
 apps/web   React + Vite UI  (React Router, Tailwind + shadcn/ui + KaTeX)
-.env       shared config for both apps (copy from .env.example)
+apps/api/.env  API settings and secrets (copy from apps/api/.env.example)
+apps/web/.env  website settings, VITE_* only (copy from apps/web/.env.example)
 ```
 
 ## Run locally
@@ -15,7 +16,8 @@ apps/web   React + Vite UI  (React Router, Tailwind + shadcn/ui + KaTeX)
 Needs Node 20+ (tested on Node 24).
 
 ```bash
-cp .env.example .env          # then edit ADMIN_PASSWORD, JWT_SECRET
+cp apps/api/.env.example apps/api/.env   # then edit ADMIN_PASSWORD, JWT_SECRET, DB_*
+cp apps/web/.env.example apps/web/.env
 cd apps/api && npm install && cd ../web && npm install && cd ../..
 npm run dev:api               # http://localhost:4100/api
 npm run dev:web               # http://localhost:3000
@@ -51,6 +53,6 @@ The JSON files mirror the planned MySQL tables (step 2).
 - If npm fails with `Cannot read properties of null (reading 'edgesOut')`, the global npm is
   too old (10.2.x). Use the npm bundled with Node:
   `node "C:/Program Files/nodejs/node_modules/npm/bin/npm-cli.js" install`
-- The frontend reads `VITE_API_URL` from the root `.env` (only `VITE_*` variables reach the browser).
+- The frontend reads `VITE_API_URL` from `apps/web/.env` (only `VITE_*` variables reach the browser).
 - Phase 0 serves every stored file at `/files/...` (including original PDFs). Protected
   downloads come with the download feature.

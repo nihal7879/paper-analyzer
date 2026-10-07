@@ -11,8 +11,7 @@ const API_PROXY = {
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
-  // One shared .env at the repo root (also read by apps/api). Only VITE_* vars reach the browser.
-  envDir: "../..",
+  // apps/web/.env (Vite's default). Only VITE_* vars reach the browser.
   resolve: {
     alias: { "@": fileURLToPath(new URL("./src", import.meta.url)) },
   },

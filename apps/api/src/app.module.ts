@@ -19,8 +19,8 @@ class HealthController {
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
-      // One .env at the repo root, shared by api and web.
-      envFilePath: [resolve(process.cwd(), '../../.env'), resolve(process.cwd(), '.env')],
+      // apps/api/.env (the API's own settings and secrets).
+      envFilePath: [resolve(process.cwd(), '.env')],
       validate: validateEnv,
     }),
     StorageModule,
