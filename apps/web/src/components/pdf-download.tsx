@@ -9,6 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { downloadPdf, originalPdfUrl, pdfParams, sourceLine, type AnswerMode, type PaperMeta, type PdfRequest } from "@/lib/api";
 import type { BankEntry } from "@/lib/question-bank";
+import { groupKeyOf } from "@/lib/question-bank";
 import { selection } from "@/lib/selection";
 import { cn } from "@/lib/utils";
 
@@ -30,10 +31,6 @@ async function runPdf(req: PdfRequest, fileName: string) {
   }
 }
 
-function marksOf(entries: BankEntry[]) {
-  return entries.reduce((s, e) => s + (e.question.marks ?? 0), 0);
-}
-
 function safeName(s: string) {
   return s.replace(/[\\/:*?"<>|]+/g, "").replace(/\s+/g, " ").trim().slice(0, 120) || "questions";
 }
@@ -42,12 +39,7 @@ function safeName(s: string) {
 
 export function PaperDownloadMenu({ meta, children, className }: { meta: PaperMeta; children: React.ReactNode; className?: string }) {
   const [open, setOpen] = useState(false);
-  const name = safeName(`${meta.subjectName} ${meta.seasonName} ${meta.year} Paper ${meta.paperCode}`);
   const item = "flex w-full items-center gap-2.5 rounded-md px-2 py-2.5 text-left text-sm transition-colors hover:bg-muted lg:py-2";
-  const pick = (answers: AnswerMode) => {
-    setOpen(false);
-    void runPdf({ paper: meta.id, answers }, answers === "none" ? name : `${name} with answers`);
-  };
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger
@@ -61,19 +53,13 @@ export function PaperDownloadMenu({ meta, children, className }: { meta: PaperMe
       </PopoverTrigger>
       <PopoverContent align="end" className="w-64 gap-0.5 p-1.5">
         <p className="px-2 pt-1 pb-1.5 text-xs font-semibold text-muted-foreground">{sourceLine(meta)}</p>
-        <button type="button" className={item} onClick={() => pick("none")}>
-          <FileDown className="size-4 text-primary" /> Whole paper (PDF)
-        </button>
-        <button type="button" className={item} onClick={() => pick("end")}>
-          <FileDown className="size-4 text-primary" /> Whole paper + answers
-        </button>
-        <div className="my-1 border-t" />
+        {/* The original PDFs only (the rebuilt whole-paper downloads were removed) */}
         <a className={item} href={originalPdfUrl(meta.id, "qp")} target="_blank" rel="noreferrer" onClick={() => setOpen(false)}>
-          <FileText className="size-4 text-muted-foreground" /> Original question paper
+          <FileText className="size-4 text-primary" /> Original question paper
         </a>
         {meta.msFileName && (
           <a className={item} href={originalPdfUrl(meta.id, "ms")} target="_blank" rel="noreferrer" onClick={() => setOpen(false)}>
-            <FileText className="size-4 text-muted-foreground" /> Original mark scheme
+            <FileText className="size-4 text-primary" /> Original mark scheme
           </a>
         )}
       </PopoverContent>
@@ -87,14 +73,14 @@ export function PaperDownloadMenu({ meta, children, className }: { meta: PaperMe
 export function SelectionBar({ ids, byId }: { ids: string[]; byId: Map<string, BankEntry> }) {
   const [open, setOpen] = useState(false);
   const picked = ids.flatMap((id) => byId.get(id) ?? []);
-  const marks = picked.reduce((s, e) => s + (e.question.marks ?? 0), 0);
   const visible = picked.length > 0;
+  const wholeQuestions = new Set(picked.map(groupKeyOf)).size;
 
   return (
     <>
       <div
         className={cn(
-          "pointer-events-none fixed inset-x-0 bottom-[calc(4.75rem+env(safe-area-inset-bottom))] z-30 lg:bottom-[max(1rem,env(safe-area-inset-bottom))] flex justify-center px-4 transition-[transform,opacity] duration-300 ease-out",
+          "pointer-events-none fixed inset-x-0 bottom-[max(1rem,env(safe-area-inset-bottom))] z-30 flex justify-center px-4 transition-[transform,opacity] duration-300 ease-out",
           visible ? "translate-y-0 opacity-100" : "translate-y-6 opacity-0",
         )}
         aria-hidden={!visible}
@@ -102,8 +88,7 @@ export function SelectionBar({ ids, byId }: { ids: string[]; byId: Map<string, B
       >
         <div className="pointer-events-auto flex w-full max-w-xl items-center gap-2 rounded-2xl border bg-popover p-2 pl-4 shadow-lg ring-1 ring-foreground/5 lg:bg-popover/95 lg:backdrop-blur">
           <p className="mr-auto min-w-0 text-sm">
-            <span className="font-semibold">{picked.length}</span> selected
-            <span className="hidden text-muted-foreground sm:inline"> · {marks} mark{marks === 1 ? "" : "s"}</span>
+            <span className="font-semibold">{wholeQuestions}</span> selected
           </p>
           <Button variant="ghost" size="sm" onClick={() => selection.clear()} className="text-muted-foreground">
             Clear
@@ -194,7 +179,7 @@ function SelectionDialog({ open, onOpenChange, picked }: { open: boolean; onOpen
         <DialogHeader>
           <DialogTitle>Download PDF</DialogTitle>
           <DialogDescription>
-            {picked.length} question{picked.length === 1 ? "" : "s"} · {marksOf(picked)} mark{marksOf(picked) === 1 ? "" : "s"}, in the order you added them.
+            {picked.length} question{picked.length === 1 ? "" : "s"}, in the order you added them.
           </DialogDescription>
         </DialogHeader>
 

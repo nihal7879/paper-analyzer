@@ -17,7 +17,7 @@ function Layout() {
   return (
     <Providers>
       <TopBar />
-      <main className="mx-auto w-full max-w-7xl flex-1 px-3 py-4 sm:px-4 sm:py-8">
+      <main className="mx-auto w-full max-w-7xl flex-1 px-3 pt-3 pb-4 sm:px-4 sm:pt-4 sm:pb-8">
         <Outlet />
       </main>
       {/* Back/forward returns to the same scroll position; new pages start at the top */}

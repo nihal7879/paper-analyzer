@@ -1,7 +1,7 @@
 import { ArrowLeft, Check, ChevronLeft, ChevronRight, Sparkles } from "lucide-react";
 import { useCallback, useEffect, useMemo } from "react";
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from "react-router";
-import { SelectionStrip } from "@/components/pdf-download";
+import { SelectionBar } from "@/components/pdf-download";
 import { QuestionCard } from "@/components/question-card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -82,11 +82,10 @@ export function SimilarPage() {
       </Card>
     );
 
-  const onThisPage = new Set(items.map((e) => e.question.id));
   const shortSource = (e: BankEntry) => `${e.meta.seasonName} ${e.meta.year} · Paper ${e.meta.paperCode} · Q${e.question.number}`;
 
   return (
-    <div className="grid grid-cols-[minmax(0,1fr)] gap-4">
+    <div className={cn("grid grid-cols-[minmax(0,1fr)] gap-4", selected.length > 0 && "pb-20")}>
       {/* Header */}
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
         <Button variant="outline" className="gap-1.5" onClick={back}>
@@ -97,9 +96,6 @@ export function SimilarPage() {
         </h1>
         <span className="text-sm text-muted-foreground">to {sourceLine(origin.meta, origin.question.number)}</span>
       </div>
-
-      {/* What is picked for the PDF (Add to PDF works on this page too) */}
-      <SelectionStrip ids={selected} byId={byId} highlight={onThisPage} />
 
       <div className="grid grid-cols-[minmax(0,1fr)] items-start gap-4 lg:grid-cols-[300px_minmax(0,1fr)] lg:gap-6">
         {/* List */}
@@ -176,6 +172,9 @@ export function SimilarPage() {
           </section>
         )}
       </div>
+
+      {/* Same bottom bar as the questions page: what is picked for the PDF */}
+      <SelectionBar ids={selected} byId={byId} />
     </div>
   );
 }

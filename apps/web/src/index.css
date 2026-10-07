@@ -187,6 +187,126 @@
   --sidebar-ring: oklch(0.556 0 0);
 }
 
+/* Grey: calm neutral greys, charcoal accents (Settings → Colour → Grey) */
+:root[data-color="grey"] {
+  --background: oklch(0.975 0 0);
+  --foreground: oklch(0.2 0 0);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.2 0 0);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.2 0 0);
+  --primary: oklch(0.32 0.005 286);
+  --primary-foreground: oklch(0.985 0 0);
+  --secondary: oklch(0.955 0 0);
+  --secondary-foreground: oklch(0.25 0 0);
+  --muted: oklch(0.955 0 0);
+  --muted-foreground: oklch(0.5 0 0);
+  --accent: oklch(0.955 0 0);
+  --accent-foreground: oklch(0.25 0 0);
+  --border: oklch(0.9 0 0);
+  --input: oklch(0.9 0 0);
+  --ring: oklch(0.55 0.005 286);
+}
+:root[data-color="grey"].dark {
+  --background: oklch(0.17 0 0);
+  --foreground: oklch(0.96 0 0);
+  --card: oklch(0.215 0 0);
+  --card-foreground: oklch(0.96 0 0);
+  --popover: oklch(0.215 0 0);
+  --popover-foreground: oklch(0.96 0 0);
+  --primary: oklch(0.88 0.005 286);
+  --primary-foreground: oklch(0.2 0 0);
+  --secondary: oklch(0.27 0 0);
+  --secondary-foreground: oklch(0.96 0 0);
+  --muted: oklch(0.27 0 0);
+  --muted-foreground: oklch(0.7 0 0);
+  --accent: oklch(0.27 0 0);
+  --accent-foreground: oklch(0.96 0 0);
+  --border: oklch(1 0 0 / 10%);
+  --input: oklch(1 0 0 / 15%);
+  --ring: oklch(0.6 0.005 286);
+}
+
+/* Lavender: soft lavender page (#f3f2fb), white cards, violet accents (Settings → Colour → Lavender) */
+:root[data-color="lavender"] {
+  --background: #f3f2fb;
+  --foreground: oklch(0.21 0.02 285);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.21 0.02 285);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.21 0.02 285);
+  --primary: oklch(0.5 0.18 285);
+  --primary-foreground: oklch(0.985 0 0);
+  --secondary: oklch(0.935 0.02 285);
+  --secondary-foreground: oklch(0.3 0.05 285);
+  --muted: oklch(0.93 0.022 285); /* question headers: a step darker than the page */
+  --muted-foreground: oklch(0.5 0.03 285);
+  --accent: oklch(0.935 0.02 285);
+  --accent-foreground: oklch(0.3 0.05 285);
+  --border: oklch(0.895 0.02 285);
+  --input: oklch(0.895 0.02 285);
+  --ring: oklch(0.62 0.15 285);
+}
+:root[data-color="lavender"].dark {
+  --background: oklch(0.17 0.02 285);
+  --foreground: oklch(0.96 0.005 285);
+  --card: oklch(0.215 0.022 285);
+  --card-foreground: oklch(0.96 0.005 285);
+  --popover: oklch(0.215 0.022 285);
+  --popover-foreground: oklch(0.96 0.005 285);
+  --primary: oklch(0.76 0.12 285);
+  --primary-foreground: oklch(0.2 0.05 285);
+  --secondary: oklch(0.275 0.025 285);
+  --secondary-foreground: oklch(0.96 0.005 285);
+  --muted: oklch(0.275 0.025 285);
+  --muted-foreground: oklch(0.72 0.02 285);
+  --accent: oklch(0.275 0.025 285);
+  --accent-foreground: oklch(0.96 0.005 285);
+  --border: oklch(1 0 0 / 10%);
+  --input: oklch(1 0 0 / 15%);
+  --ring: oklch(0.6 0.12 285);
+}
+
+/* Navy: dashboard style — light: pale blue-white page, white cards; dark: deep navy (Settings → Colour → Navy) */
+:root[data-color="navy"] {
+  --background: #f4f7ff;
+  --foreground: #0f172a;
+  --card: #ffffff;
+  --card-foreground: #0f172a;
+  --popover: #ffffff;
+  --popover-foreground: #0f172a;
+  --primary: #2563eb;
+  --primary-foreground: #ffffff;
+  --secondary: #eef2fb;
+  --secondary-foreground: #1e293b;
+  --muted: #f8fafc;
+  --muted-foreground: #64748b;
+  --accent: #eef2fb;
+  --accent-foreground: #1e293b;
+  --border: #e2e8f8;
+  --input: #e2e8f8;
+  --ring: #93b4f5;
+}
+:root[data-color="navy"].dark {
+  --background: #040b1d;
+  --foreground: #e8eefc;
+  --card: #0b1529;
+  --card-foreground: #e8eefc;
+  --popover: #0e1930;
+  --popover-foreground: #e8eefc;
+  --primary: #60a5fa;
+  --primary-foreground: #04101f;
+  --secondary: #0f2342;
+  --secondary-foreground: #e8eefc;
+  --muted: #0f2342;
+  --muted-foreground: #8ea3c8;
+  --accent: #0f2342;
+  --accent-foreground: #e8eefc;
+  --border: #223459;
+  --input: #223459;
+  --ring: #3b6fd1;
+}
+
 @layer base {
   * {
     @apply border-border outline-ring/50;
@@ -586,4 +706,33 @@ html {
 }
 .dual-range[data-dragging] .dual-range-fill {
   transition: none;
+}
+/* toolbar search: grows out of the 🔍 button */
+@keyframes search-open {
+  from {
+    opacity: 0;
+    transform: scaleX(0.6);
+  }
+}
+.search-open {
+  transform-origin: right center;
+  animation: search-open 200ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+/* Outlined buttons: white, thin blue-grey border, soft shadow underneath (all colour themes) */
+:root {
+  --btn-border: color-mix(in oklab, var(--border) 55%, #9db6e6 45%);
+}
+.dark {
+  --btn-border: color-mix(in oklab, var(--border) 80%, white 8%);
+}
+.btn-soft {
+  box-shadow:
+    0 2px 4px -1px rgb(15 35 80 / 0.08),
+    0 1px 2px rgb(15 35 80 / 0.05);
+}
+.dark .btn-soft {
+  box-shadow: 0 2px 4px -1px rgb(0 0 0 / 0.35);
+}
+.btn-soft:active {
+  box-shadow: 0 1px 1px rgb(15 35 80 / 0.06);
 }

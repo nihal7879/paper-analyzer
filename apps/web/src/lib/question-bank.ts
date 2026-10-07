@@ -114,19 +114,20 @@ const facetValue: Record<MultiKey, (e: BankEntry) => string> = {
   difficulty: (e) => e.question.difficulty,
 };
 
-function matches(e: BankEntry, f: Filters, words: string[], skip?: SkipKey): boolean {
-  if (skip !== "board" && f.board && e.meta.board !== f.board) return false;
-  if (skip !== "level" && f.level && e.meta.curriculum !== f.level) return false;
-  if (skip !== "course" && f.course && e.meta.subjectCode !== f.course) return false;
-  if (skip !== "topic" && (f.topic.length || f.sub.length)) {
+function matches(e: BankEntry, f: Filters, words: string[], skip?: SkipKey | SkipKey[]): boolean {
+  const skips = (k: SkipKey) => (Array.isArray(skip) ? skip.includes(k) : skip === k);
+  if (!skips("board") && f.board && e.meta.board !== f.board) return false;
+  if (!skips("level") && f.level && e.meta.curriculum !== f.level) return false;
+  if (!skips("course") && f.course && e.meta.subjectCode !== f.course) return false;
+  if (!skips("topic") && (f.topic.length || f.sub.length)) {
     if (!f.topic.includes(e.question.topic) && !f.sub.includes(subKey(e.question.topic, e.question.subtopic))) return false;
   }
-  if (skip !== "year") {
+  if (!skips("year")) {
     if (f.yearFrom != null && e.meta.year < f.yearFrom) return false;
     if (f.yearTo != null && e.meta.year > f.yearTo) return false;
   }
   for (const k of Object.keys(facetValue) as MultiKey[]) {
-    if (k === skip || f[k].length === 0) continue;
+    if (skips(k) || f[k].length === 0) continue;
     if (!f[k].includes(facetValue[k](e))) return false;
   }
   return words.length === 0 || matchesSearch(e, words);
@@ -169,7 +170,7 @@ function compareCodes(a: string | null | undefined, b: string | null | undefined
 export function buildFacets(entries: BankEntry[], f: Filters) {
   const words = searchWords(f.q);
 
-  const count = (skip: SkipKey, value: (e: BankEntry) => string, label: (e: BankEntry) => string) => {
+  const count = (skip: SkipKey | SkipKey[], value: (e: BankEntry) => string, label: (e: BankEntry) => string) => {
     const map = new Map<string, FacetOption>();
     for (const e of entries) {
       if (!matches(e, f, words, skip)) continue;
@@ -188,13 +189,15 @@ export function buildFacets(entries: BankEntry[], f: Filters) {
 
   // Board / level: only ones with published questions
   const sortOpts = (m: Map<string, FacetOption>) => [...m.values()].sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
-  const boards = sortOpts(count("board", (e) => e.meta.board, (e) => e.meta.board));
-  const levels = sortOpts(count("level", (e) => e.meta.curriculum, (e) => e.meta.curriculum));
-  const subjects = sortOpts(count("course", (e) => e.meta.subjectCode, (e) => `${e.meta.subjectName} (${e.meta.subjectCode})`));
+  // Chain Board -> Level -> Subject -> Topic: each list depends only on the choices before it.
+  const boards = sortOpts(count(["board", "level", "course", "topic"], (e) => e.meta.board, (e) => e.meta.board));
+  const levels = sortOpts(count(["level", "course", "topic"], (e) => e.meta.curriculum, (e) => e.meta.curriculum));
+  const subjects = sortOpts(count(["course", "topic"], (e) => e.meta.subjectCode, (e) => `${e.meta.subjectName} (${e.meta.subjectCode})`));
 
   // Topic tree (topics -> syllabus subtopics)
   const topicMap = new Map<string, TopicNode & { code: string | null; subCodes: Map<string, string | null> }>();
-  const inCourse = (e: BankEntry) => !f.course || e.meta.subjectCode === f.course;
+  const inCourse = (e: BankEntry) =>
+    (!f.course || e.meta.subjectCode === f.course) && (!f.board || e.meta.board === f.board) && (!f.level || e.meta.curriculum === f.level);
   for (const e of entries) {
     if (!inCourse(e)) continue;
     const q = e.question;
@@ -249,6 +252,25 @@ export function buildFacets(entries: BankEntry[], f: Filters) {
 }
 
 export type Facets = ReturnType<typeof buildFacets>;
+
+/**
+ * After an earlier choice in the chain changes (Board -> Level -> Subject -> Topic -> Subtopic, paper numbers),
+ * drops the later choices that no longer exist under it.
+ */
+export function fixChain(entries: BankEntry[], f: Filters): Filters {
+  const next = { ...f };
+  const has = (pred: (e: BankEntry) => boolean) => entries.some(pred);
+  const okBoard = (e: BankEntry) => !next.board || e.meta.board === next.board;
+  const okLevel = (e: BankEntry) => okBoard(e) && (!next.level || e.meta.curriculum === next.level);
+  const okCourse = (e: BankEntry) => okLevel(e) && (!next.course || e.meta.subjectCode === next.course);
+  if (next.level && !has((e) => okBoard(e) && e.meta.curriculum === next.level)) next.level = null;
+  if (next.course && !has((e) => okLevel(e) && e.meta.subjectCode === next.course)) next.course = null;
+  const inChain = entries.filter(okCourse);
+  next.topic = next.topic.filter((t) => inChain.some((e) => e.question.topic === t));
+  next.sub = next.sub.filter((k) => inChain.some((e) => subKey(e.question.topic, e.question.subtopic) === k));
+  next.paper = next.paper.filter((p) => inChain.some((e) => facetValue.paper(e) === p));
+  return next;
+}
 
 // ---------------- sorting
 
@@ -338,4 +360,53 @@ export function filtersToParams(f: Filters, sort: SortKey): URLSearchParams {
 /** Filters set in the side panel (search has its own box). */
 export function activeFilterCount(f: Filters): number {
   return (f.board ? 1 : 0) + (f.level ? 1 : 0) + (f.course ? 1 : 0) + f.topic.length + f.sub.length + (f.yearFrom != null || f.yearTo != null ? 1 : 0) + MULTI_KEYS.reduce((n, k) => n + f[k].length, 0);
+}
+
+// ---------------- whole questions (parts grouped, like the paper)
+
+/** "12(a)(ii)" -> "12". Parts of one paper question share this number. */
+export function baseNumber(n: string): string {
+  const s = String(n).trim();
+  const b = s.replace(/\s*\(.*$/, "").trim();
+  return b || s;
+}
+
+export function groupKeyOf(e: Pick<BankEntry, "meta" | "question">): string {
+  return `${e.meta.id}|${baseNumber(e.question.number)}`;
+}
+
+/** A whole paper question: its parts (a), (b), (c)… in paper order. Looks like its first part. */
+export interface QuestionGroup extends BankEntry {
+  parts: BankEntry[];
+  /** Parts that match the current filters / search (the whole question is still shown). */
+  matched: Set<string>;
+}
+
+/** Group key -> all its parts (paper order). */
+export function buildPartIndex(pool: BankEntry[]): Map<string, BankEntry[]> {
+  const m = new Map<string, BankEntry[]>();
+  for (const e of pool) {
+    const k = groupKeyOf(e);
+    const list = m.get(k);
+    if (list) list.push(e);
+    else m.set(k, [e]);
+  }
+  for (const list of m.values()) list.sort((a, b) => a.order - b.order);
+  return m;
+}
+
+/** Filtered + sorted parts -> whole questions, in the order their first matching part appears. */
+export function groupResults(sorted: BankEntry[], index: Map<string, BankEntry[]>): QuestionGroup[] {
+  const out = new Map<string, QuestionGroup>();
+  for (const e of sorted) {
+    const k = groupKeyOf(e);
+    let g = out.get(k);
+    if (!g) {
+      const parts = index.get(k) ?? [e];
+      g = { ...parts[0], key: k, parts, matched: new Set() };
+      out.set(k, g);
+    }
+    g.matched.add(e.question.id);
+  }
+  return [...out.values()];
 }

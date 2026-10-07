@@ -79,8 +79,6 @@ export function PrintPage() {
         <h1 className="text-xl font-bold">{title}</h1>
         <p className="mt-1 text-xs text-neutral-600">
           {items.length} question{items.length === 1 ? "" : "s"} · {marks} marks
-          {answers === "end" && " · answers at the end"}
-          {answers === "inline" && " · answers after each question"}
         </p>
       </header>
 

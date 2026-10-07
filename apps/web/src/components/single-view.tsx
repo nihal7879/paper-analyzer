@@ -2,18 +2,21 @@ import { ChevronLeft, ChevronRight } from "lucide-react";
 import { useEffect, useRef } from "react";
 import { QuestionCard, type SimilarItem } from "@/components/question-card";
 import { Button } from "@/components/ui/button";
-import type { BankEntry } from "@/lib/question-bank";
+import type { CardQuestion } from "@/components/question-card";
+import type { QuestionGroup } from "@/lib/question-bank";
 
 /**
  * One question at a time: ‹ › buttons, ← → keys, swipe left / right on phones, and a progress bar.
  */
 export function SingleQuestionView({
   results,
+  partQuestions,
   index,
   onIndex,
   similarById,
 }: {
-  results: BankEntry[];
+  results: QuestionGroup[];
+  partQuestions: Map<string, CardQuestion[]>;
   index: number;
   onIndex: (i: number) => void;
   similarById: Map<string, SimilarItem[]>;
@@ -84,7 +87,15 @@ export function SingleQuestionView({
           if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.5) go(dx < 0 ? i + 1 : i - 1);
         }}
       >
-        <QuestionCard question={current.question} meta={current.meta} similar={similarById.get(current.question.id)} selectable />
+        <QuestionCard
+          question={current.question}
+          meta={current.meta}
+          parts={partQuestions.get(current.key)}
+          matched={current.matched}
+          similar={similarById.get(current.key)}
+          selectable
+          serial={i + 1}
+        />
       </div>
 
       <div className="flex gap-2">

@@ -18,7 +18,7 @@ import { cn } from "@/lib/utils";
 type Option<T extends string> = { value: T; label: string; icon?: typeof List; swatch?: string };
 
 /** A segmented switch whose highlight slides to the chosen option. */
-function SlideSwitch<T extends string>({ label, value, options, onChange }: { label: string; value: T; options: Option<T>[]; onChange: (v: T) => void }) {
+function SlideSwitch<T extends string>({ label, value, options, onChange, stacked }: { label: string; value: T; options: Option<T>[]; onChange: (v: T) => void; stacked?: boolean }) {
   const index = Math.max(0, options.findIndex((o) => o.value === value));
   return (
     <div className="grid gap-1.5">
@@ -40,11 +40,12 @@ function SlideSwitch<T extends string>({ label, value, options, onChange }: { la
               aria-checked={on}
               onClick={() => onChange(o.value)}
               className={cn(
-                "relative z-10 flex min-w-0 items-center justify-center gap-1.5 rounded-lg px-1.5 py-2 text-[13px] text-muted-foreground transition-colors duration-200",
+                "relative z-10 flex min-w-0 items-center justify-center gap-1 rounded-lg px-1 py-2 text-[12px] text-muted-foreground transition-colors duration-200 sm:gap-1.5 sm:px-1.5 sm:text-[13px]",
+                stacked && "flex-col gap-1 py-1.5 text-[11.5px] sm:gap-1 sm:px-1 sm:text-[12px]",
                 on && "font-medium text-foreground",
               )}
             >
-              {o.swatch && <span className="size-3 shrink-0 rounded-full ring-1 ring-foreground/10" style={{ background: o.swatch }} />}
+              {o.swatch && <span className={cn("shrink-0 rounded-full ring-1 ring-foreground/10", stacked ? "size-4" : "size-3")} style={{ background: o.swatch }} />}
               {o.icon && <o.icon className="size-4 shrink-0" />}
               <span className="truncate">{o.label}</span>
             </button>
@@ -72,7 +73,7 @@ export function SettingsMenu() {
       >
         <Settings className="size-[18px] transition-transform duration-300 group-data-popup-open:rotate-45" />
       </PopoverTrigger>
-      <PopoverContent align="end" className="max-h-[80dvh] w-[min(94vw,22rem)] gap-3.5 overflow-y-auto p-3.5">
+      <PopoverContent align="end" className="max-h-[80dvh] w-[min(94vw,24rem)] gap-3.5 overflow-y-auto p-3.5">
         <p className="px-1 text-sm font-semibold">Settings</p>
         <SlideSwitch<ViewMode>
           label="Show questions"
@@ -95,11 +96,15 @@ export function SettingsMenu() {
         />
         <SlideSwitch<ColorTheme>
           label="Colour"
+          stacked
           value={color}
           onChange={setColorTheme}
           options={[
             { value: "teal", label: "Teal", swatch: "#0f6b63" },
             { value: "blue", label: "Blue", swatch: "#2447d4" },
+            { value: "grey", label: "Grey", swatch: "#3f3f46" },
+            { value: "lavender", label: "Lavender", swatch: "#6d5fd8" },
+            { value: "navy", label: "Navy", swatch: "#1e3a8a" },
           ]}
         />
         <SlideSwitch<Theme>

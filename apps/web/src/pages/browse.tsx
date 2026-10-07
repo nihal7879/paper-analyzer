@@ -1,8 +1,9 @@
 import { useQuery } from "@tanstack/react-query";
-import { ArrowUp, CheckCheck, CircleCheck, Library, Loader2, SearchX, X } from "lucide-react";
+import { ArrowDownUp, ArrowUp, CheckCheck, CircleCheck, Library, Loader2, SearchX, X } from "lucide-react";
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useNavigationType, useSearchParams } from "react-router";
-import { ActiveChips, FilterRail, SearchBox } from "@/components/bank-filters";
+import { ActiveChips } from "@/components/bank-filters";
+import { FilterPanel, FiltersButton, SearchToggle } from "@/components/filter-bar";
 import { warmMath } from "@/components/math-text";
 import { SelectionBar } from "@/components/pdf-download";
 import { QuestionCard, type SimilarItem } from "@/components/question-card";
@@ -23,6 +24,8 @@ import {
   filtersFromParams,
   filtersToParams,
   rememberCourse,
+  buildPartIndex,
+  groupResults,
   sortEntries,
   useQuestionBank,
   type Filters,
@@ -117,16 +120,36 @@ export function BrowsePage() {
     }
     return warmMath(texts);
   }, [pool]);
-  const results = useMemo(() => sortEntries(filterEntries(pool, deferredFilters), deferredSort), [pool, deferredFilters, deferredSort]);
+  // Parts (a), (b), (c)… of one paper question are shown together as one whole question, like the paper.
+  const partIndex = useMemo(() => buildPartIndex(pool), [pool]);
+  const partQuestions = useMemo(() => new Map([...partIndex].map(([k, list]) => [k, list.map((p) => p.question)])), [partIndex]);
+  const results = useMemo(
+    () => groupResults(sortEntries(filterEntries(pool, deferredFilters), deferredSort), partIndex),
+    [pool, deferredFilters, deferredSort, partIndex],
+  );
   // Question id -> entry, to turn each question's similarIds into cards (published questions only).
   const byId = useMemo(() => new Map(pool.map((e) => [e.question.id, e])), [pool]);
   // Resolved once per bank load, so every card gets the same array each render (cards are memoised).
+  // Keyed by whole question: the best matches of all its parts (not its own parts), up to 5.
   const similarById = useMemo(() => {
     const m = new Map<string, SimilarItem[]>();
-    for (const e of pool)
-      m.set(e.question.id, e.question.similarIds.flatMap((id) => byId.get(id) ?? []).slice(0, 5).map((s) => ({ key: s.key, meta: s.meta, question: s.question })));
+    for (const [k, parts] of partIndex) {
+      const own = new Set(parts.map((p) => p.question.id));
+      const seen = new Set<string>();
+      const list: SimilarItem[] = [];
+      // round-robin over the parts so each part's best match comes first
+      const lists = parts.map((p) => p.question.similarIds);
+      for (let r = 0; list.length < 5 && lists.some((l) => r < l.length); r++)
+        for (const l of lists) {
+          const s = l[r] ? byId.get(l[r]) : undefined;
+          if (!s || own.has(s.question.id) || seen.has(s.question.id) || list.length >= 5) continue;
+          seen.add(s.question.id);
+          list.push({ key: s.key, meta: s.meta, question: s.question });
+        }
+      m.set(k, list);
+    }
     return m;
-  }, [pool, byId]);
+  }, [partIndex, byId]);
   // New results: draw what fits on screen first, the rest of the page one frame later (feels instant).
   // (The first list after the page appears is drawn in full, so Back can restore the scroll position.)
   const [renderLimit, setRenderLimit] = useState(Infinity);
@@ -234,10 +257,10 @@ export function BrowsePage() {
   const visible = results.slice(0, Math.min(shown, renderLimit));
   const pageCount = Math.min(shown, results.length);
   const paperCount = useMemo(() => new Set(results.map((r) => r.meta.id)).size, [results]);
-  const totalMarks = useMemo(() => results.reduce((s, r) => s + (r.question.marks ?? 0), 0), [results]);
   const active = activeFilterCount(filters);
   const selectedSet = useMemo(() => new Set(selected), [selected]);
-  const allResultsSelected = results.length > 0 && results.every((r) => selectedSet.has(r.question.id));
+  const resultIds = useMemo(() => results.flatMap((r) => r.parts.map((p) => p.question.id)), [results]);
+  const allResultsSelected = resultIds.length > 0 && resultIds.every((id) => selectedSet.has(id));
 
   const update = useCallback((next: Partial<Filters>, nextSort?: SortKey) => {
     setFilters((f) => ({ ...f, ...next }));
@@ -261,6 +284,18 @@ export function BrowsePage() {
     [update, pool],
   );
   const setQuery = useCallback((q: string) => update({ q }), [update]);
+  // Search is an icon until clicked; filters open in a panel from the "Filters" button.
+  const [searchOpen, setSearchOpen] = useState(() => filters.q !== "");
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const closeFilters = useCallback(() => setFiltersOpen(false), []);
+  // "Done" in the filter panel: its choices replace the current ones (the search text stays).
+  const applyFilters = useCallback(
+    (next: Omit<Filters, "q">) => {
+      rememberCourse(next.course);
+      update(next);
+    },
+    [update],
+  );
 
 
   return (
@@ -268,16 +303,56 @@ export function BrowsePage() {
       {/* Title + description live in the navbar; kept here for screen readers */}
       <h1 className="sr-only">Practice questions</h1>
 
-      <div className="grid items-start gap-4 lg:grid-cols-[84px_minmax(0,1fr)] lg:gap-6">
-        {/* Filters: icon rail (laptop: column on the left; phone / tablet: a row of icon tabs) */}
-        <div className="z-20 lg:sticky lg:top-20">
-          <FilterRail filters={filters} facets={facets} update={update} active={active} onClear={clearAll} onCourse={setCourse} />
-        </div>
+      <div className="grid gap-4">
+        {/* Results (full width; filters open from the toolbar) */}
+        <section className={cn("grid min-w-0 gap-4", selected.length > 0 && "pb-20")}>
+          {/* Toolbar: count · 🔍 · Filters · Select all · Sort */}
+          <div className="flex items-center gap-2">
+            <p className={cn("mr-auto shrink-0 text-sm text-muted-foreground", (searchOpen || filters.q) && "max-sm:hidden")}>
+              {!bank.isLoading && (
+                <>
+                  <span className="font-semibold text-foreground">{results.length}</span> question{results.length === 1 ? "" : "s"}
+                  {results.length > 0 && (
+                    <span className="hidden sm:inline">
+                      {" "}
+                      · {paperCount} paper{paperCount === 1 ? "" : "s"}
+                    </span>
+                  )}
+                </>
+              )}
+            </p>
+            <SearchToggle value={filters.q} onChange={setQuery} open={searchOpen} onOpenChange={setSearchOpen} />
+            <FiltersButton open={filtersOpen} active={active} onClick={() => setFiltersOpen((o) => !o)} />
+            {results.length > 0 && (
+              <Button
+                variant="outline"
+                className="h-10 shrink-0 gap-1.5 max-md:hidden sm:h-9"
+                aria-label={allResultsSelected ? "Unselect all" : "Select all"}
+                onClick={() => (allResultsSelected ? selection.removeMany : selection.addMany)(resultIds)}
+                title="Add every question in this list to the PDF"
+              >
+                <CheckCheck className="size-4" />
+                {allResultsSelected ? "Unselect all" : `Select all ${results.length}`}
+              </Button>
+            )}
+            <Select items={SORT_ITEMS} value={sort} onValueChange={(v) => update({}, (v as SortKey) ?? "newest")}>
+              <SelectTrigger className="btn-soft h-10 w-auto shrink-0 rounded-xl border-[color:var(--btn-border)] bg-card font-semibold sm:h-9 sm:w-44" aria-label="Sort">
+                <ArrowDownUp className="size-4 sm:hidden" />
+                <span className="max-sm:hidden">
+                  <SelectValue />
+                </span>
+              </SelectTrigger>
+              <SelectContent align="end">
+                {SORT_ITEMS.map((s) => (
+                  <SelectItem key={s.value} value={s.value}>
+                    {s.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
 
-        {/* Results */}
-        <section className={cn("grid min-w-0 gap-4 pb-20 lg:pb-0", selected.length > 0 && "pb-36 lg:pb-20")}>
-          {/* Search: top of the questions column, right of the filter rail */}
-          <SearchBox value={filters.q} onChange={setQuery} />
+          <FilterPanel open={filtersOpen} onClose={closeFilters} pool={pool} filters={filters} onApply={applyFilters} />
 
           {/* Search feedback: "searching…" while typing, then a clear "found N" (or nothing found) */}
           {filters.q.trim() !== "" && !bank.isLoading && (
@@ -315,48 +390,6 @@ export function BrowsePage() {
             </div>
           )}
 
-
-          {/* Toolbar: phones show the count left and sort right on one line (no Select all) */}
-          <div className="flex flex-wrap items-center gap-2">
-            <p className="mr-auto text-sm text-muted-foreground">
-              {!bank.isLoading && (
-                <>
-                  <span className="font-semibold text-foreground">{results.length}</span> question{results.length === 1 ? "" : "s"}
-                  {results.length > 0 && (
-                    <span className="hidden sm:inline">
-                      {" "}
-                      · {paperCount} paper{paperCount === 1 ? "" : "s"}
-                      {totalMarks > 0 && <> · {totalMarks} mark{totalMarks === 1 ? "" : "s"}</>}
-                    </span>
-                  )}
-                </>
-              )}
-            </p>
-            {results.length > 0 && (
-              <Button
-                variant="ghost"
-                className="h-10 gap-1.5 text-muted-foreground max-sm:hidden sm:h-9"
-                aria-label={allResultsSelected ? "Unselect all" : "Select all"}
-                onClick={() => (allResultsSelected ? selection.removeMany : selection.addMany)(results.map((r) => r.question.id))}
-                title="Add every question in this list to the PDF"
-              >
-                <CheckCheck className="size-4" />
-                <span className="hidden sm:inline">{allResultsSelected ? "Unselect all" : `Select all ${results.length}`}</span>
-              </Button>
-            )}
-            <Select items={SORT_ITEMS} value={sort} onValueChange={(v) => update({}, (v as SortKey) ?? "newest")}>
-              <SelectTrigger className="h-10 w-auto min-w-0 sm:h-9 sm:w-44" aria-label="Sort">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent align="end">
-                {SORT_ITEMS.map((s) => (
-                  <SelectItem key={s.value} value={s.value}>
-                    {s.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
 
           <ActiveChips filters={filters} facets={facets} update={update} onClear={clearAll} onCourse={setCourse} />
 
@@ -396,13 +429,21 @@ export function BrowsePage() {
               </div>
             </Card>
           ) : viewMode === "single" ? (
-            <SingleQuestionView results={results} index={singleIndex} onIndex={setSingleIndex} similarById={similarById} />
+            <SingleQuestionView results={results} partQuestions={partQuestions} index={singleIndex} onIndex={setSingleIndex} similarById={similarById} />
           ) : (
             <>
               <div className={cn("grid gap-4 transition-opacity duration-200", updating && "opacity-60")}>
-                {visible.map((e) => (
+                {visible.map((e, n) => (
                   <div key={e.key} className="card-auto" data-card-key={e.key}>
-                    <QuestionCard question={e.question} meta={e.meta} similar={similarById.get(e.question.id)} selectable />
+                    <QuestionCard
+                      question={e.question}
+                      meta={e.meta}
+                      parts={partQuestions.get(e.key)}
+                      matched={e.matched}
+                      similar={similarById.get(e.key)}
+                      selectable
+                      serial={n + 1}
+                    />
                   </div>
                 ))}
               </div>

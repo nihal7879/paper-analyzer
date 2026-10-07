@@ -5,7 +5,7 @@ import { difficultyLabel, difficultyStyle } from "@/lib/format";
 import { splitSubKey, type FacetOption, type Facets, type Filters, type MultiKey, type TopicNode } from "@/lib/question-bank";
 import { cn } from "@/lib/utils";
 
-type Update = (next: Partial<Filters>) => void;
+export type Update = (next: Partial<Filters>) => void;
 
 function Radio({ on }: { on: boolean }) {
   return (
@@ -585,7 +585,7 @@ function TopicTree({ nodes, filters, update }: { nodes: TopicNode[]; filters: Fi
 
 // ---------------------------------------------------------------- year range
 
-function YearRange({
+export function YearRange({
   bounds,
   counts,
   from,

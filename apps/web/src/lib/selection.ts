@@ -58,3 +58,9 @@ export function useSelection(): string[] {
 export function useIsSelected(id: string): boolean {
   return useSyncExternalStore(subscribe, () => ids.includes(id));
 }
+
+/** True when every one of these ids is selected (a whole question = all its parts). */
+export function useAllSelected(list: string[]): boolean {
+  const key = list.join(",");
+  return useSyncExternalStore(subscribe, () => list.length > 0 && key.split(",").every((id) => ids.includes(id)));
+}
