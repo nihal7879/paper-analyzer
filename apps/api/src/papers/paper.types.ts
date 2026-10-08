@@ -78,6 +78,10 @@ export interface Question {
   page: number;
   pages: number[];
   images: QuestionImage[];
+  /** The whole question part cut from the paper (one per page it is on), for worksheets that look like the real paper. */
+  crops?: QuestionImage[];
+  /** The part's rows cut from the mark scheme, for past-paper style answers. */
+  msCrops?: QuestionImage[];
   answer: { correctOption: string | null; text: string } | null;
   confidence: number;
   status: QuestionStatus;

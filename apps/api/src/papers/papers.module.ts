@@ -4,6 +4,7 @@ import { CatalogController } from '../catalog/catalog.controller.js';
 import { PdfService } from '../pdf/pdf.service.js';
 import { JobService } from '../jobs/job.service.js';
 import { ProcessingService } from '../processing/processing.service.js';
+import { QuestionCropsService } from '../processing/question-crops.service.js';
 import { EmbeddingService } from '../similarity/embedding.service.js';
 import { SimilarityService } from '../similarity/similarity.service.js';
 import { BankSearchService } from './bank-search.service.js';
@@ -15,6 +16,6 @@ import { PapersService } from './papers.service.js';
 @Module({
   imports: [AiModule],
   controllers: [PapersController, BankController, CatalogController],
-  providers: [BankSearchService, PapersService, PapersRepository, ProcessingService, JobService, ImportService, EmbeddingService, SimilarityService, PdfService],
+  providers: [BankSearchService, PapersService, PapersRepository, ProcessingService, QuestionCropsService, JobService, ImportService, EmbeddingService, SimilarityService, PdfService],
 })
 export class PapersModule {}

@@ -54,3 +54,21 @@ Rules:
 - Copy codes exactly as printed (e.g. "9702", "8PH0", "WPH11"). If printed like "8PH0/01", subject_code is "8PH0" and paper_number is "01".
 - Use null for anything not shown. Do not guess a year or code that is not on the page or in the file name.`;
 }
+
+/** Worksheet crops: one box per question part on this page, keeping the paper's own spacing. */
+export function questionBoxesPrompt(pageNumber: number, parts: string[]): string {
+  return `This is page ${pageNumber} of an exam QUESTION PAPER. These question parts appear on this page (fully, or continued from / onto another page):
+${parts.map((p) => `- ${p}`).join('\n')}
+
+Return ONE box per listed part that is on this page, so the part can be cut out and printed exactly as it looks on the paper.
+
+Rules for each box:
+- Include EVERYTHING of that part on this page: its text, MCQ options and answer boxes, diagrams, graphs, tables, formulae, the answer lines / writing space, and its marks bracket, e.g. (2) or [2].
+- Do NOT include the bold question NUMBER printed in the left margin (start the box just to the right of it).
+- Do NOT include the "(Total for Question N = X marks)" line, page headers or footers, page numbers, "Turn over", barcodes, or the hatched "DO NOT WRITE IN THIS AREA" margins.
+- If the question's shared stem (text before part (a)) is on this page, include it in the box of the FIRST part.
+- Keep the paper's spacing: each box starts where its part starts and ends where the next part starts (boxes touch, they do not overlap and leave no gap), so the white space between parts is kept.
+- Use the full printed text width: x0 just right of the margin number, x1 at the right edge of the text / marks column.
+- Coordinates are fractions 0..1 of the page width and height, x0,y0 = top-left. Order the boxes top to bottom.
+- Use the part numbers exactly as listed. Leave out a listed part only if it is not on this page.`;
+}

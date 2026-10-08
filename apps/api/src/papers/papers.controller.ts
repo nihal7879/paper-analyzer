@@ -4,6 +4,7 @@ import {
   Delete,
   Get,
   HttpCode,
+  NotFoundException,
   Param,
   ParseIntPipe,
   Patch,
@@ -174,5 +175,23 @@ export class BankController {
     const name = (q.title || q.paper || 'questions').replace(/[^\w .-]+/g, '').trim().slice(0, 100) || 'questions';
     res.set({ 'Content-Type': 'application/pdf', 'Content-Disposition': `attachment; filename="${name}.pdf"` });
     return new StreamableFile(file);
+  }
+
+  /** Make the PDF (ids in the body, so any size of selection) and return a token to download it with. */
+  @Post('pdf')
+  async preparePdf(@Body() body: { ids?: unknown; paper?: string; answers?: string; title?: string; style?: string; fileName?: string }) {
+    const ids = Array.isArray(body?.ids) ? body.ids.map(String).join(',') : undefined;
+    const q: PdfQuery = { ids, paper: body?.paper, answers: body?.answers, title: body?.title, style: body?.style };
+    const name = (body?.fileName || q.title || q.paper || 'questions').replace(/[^\w .-]+/g, '').trim().slice(0, 100) || 'questions';
+    return { token: await this.pdf.prepare(q, name) };
+  }
+
+  /** The prepared PDF, as a normal file download (the browser saves it straight to disk). */
+  @Get('pdf/file/:token')
+  pdfDownload(@Param('token') token: string, @Res({ passthrough: true }) res: Response) {
+    const hit = this.pdf.take(token);
+    if (!hit) throw new NotFoundException('This PDF has expired. Please download it again.');
+    res.set({ 'Content-Type': 'application/pdf', 'Content-Disposition': `attachment; filename="${hit.name}.pdf"` });
+    return new StreamableFile(hit.file);
   }
 }

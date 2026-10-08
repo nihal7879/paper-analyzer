@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable, InternalServerErrorException, Logger, OnModuleDestroy } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import puppeteer, { type Browser } from 'puppeteer-core';
 import type { Env } from '../config/env.js';
@@ -9,9 +10,12 @@ export interface PdfQuery {
   paper?: string;
   answers?: string;
   title?: string;
+  /** 'paper' = past-paper style worksheet (original crops, border, strip); otherwise the normal typed layout */
+  style?: string;
 }
 
-const MAX_QUESTIONS = 400;
+// no practical limit (same cap as "Select all"); big selections just take longer
+const MAX_QUESTIONS = 5000;
 const CHROME_CANDIDATES = [
   'C:/Program Files/Google/Chrome/Application/chrome.exe',
   'C:/Program Files (x86)/Google/Chrome/Application/chrome.exe',
@@ -32,9 +36,31 @@ export class PdfService implements OnModuleDestroy {
 
   constructor(private readonly config: ConfigService<Env, true>) {}
 
+  /** Finished PDFs waiting to be downloaded (token -> file), kept for a few minutes. */
+  private readonly ready = new Map<string, { file: Buffer; name: string; expires: number }>();
+
+  /**
+   * Make the PDF and keep it under a one-time token; the browser then downloads it with a plain link.
+   * (Reading a big PDF into the page's memory fails in Chrome when the disk is nearly full.)
+   */
+  async prepare(q: PdfQuery, name: string): Promise<string> {
+    const file = await this.render(q);
+    const now = Date.now();
+    for (const [k, v] of this.ready) if (v.expires < now) this.ready.delete(k);
+    const token = randomUUID();
+    this.ready.set(token, { file, name, expires: now + 10 * 60_000 });
+    return token;
+  }
+
+  take(token: string): { file: Buffer; name: string } | null {
+    const hit = this.ready.get(token);
+    if (!hit || hit.expires < Date.now()) return null;
+    return hit;
+  }
+
   async render(q: PdfQuery): Promise<Buffer> {
     const params = new URLSearchParams();
-    const answers = ['none', 'end', 'inline'].includes(q.answers ?? '') ? q.answers! : 'none';
+    const answers = ['none', 'end', 'inline', 'only'].includes(q.answers ?? '') ? q.answers! : 'none';
     if (q.paper) {
       if (!/^[A-Za-z0-9_-]{1,64}$/.test(q.paper)) throw new BadRequestException('Invalid paper');
       params.set('paper', q.paper);
@@ -46,20 +72,30 @@ export class PdfService implements OnModuleDestroy {
       params.set('ids', ids.join(','));
     }
     params.set('answers', answers);
+    const paperStyle = !q.paper && q.style === 'paper';
+    // every selection is a worksheet in the paper's layout (border + strip need the wider printable area)
+    const worksheet = !q.paper;
+    // the past-paper style answer sheet is landscape, like the real mark scheme (no border or strip)
+    const msLandscape = paperStyle && answers === 'only';
+    if (paperStyle) params.set('style', 'paper');
     if (q.title) params.set('title', q.title.slice(0, 150));
 
     const browser = await this.getBrowser();
     const page = await browser.newPage();
     try {
-      await page.goto(`${this.config.get('WEB_ORIGIN', { infer: true })}/print?${params}`, { waitUntil: 'networkidle0', timeout: 45_000 });
-      await page.waitForFunction('window.__printReady === true', { timeout: 45_000 });
+      await page.goto(`${this.config.get('WEB_ORIGIN', { infer: true })}/print?${params}`, { waitUntil: 'networkidle0', timeout: 120_000 });
+      await page.waitForFunction('window.__printReady === true', { timeout: 120_000 });
       const footer = `<div style="width:100%;font-size:8px;color:#666;padding:0 14mm;display:flex;justify-content:space-between;font-family:sans-serif">
         <span>${escapeHtml(q.title ?? '')}</span><span><span class="pageNumber"></span> / <span class="totalPages"></span></span></div>`;
       const pdf = await page.pdf({
         format: 'A4',
+        landscape: msLandscape,
         printBackground: true,
-        margin: { top: '12mm', bottom: '16mm', left: '10mm', right: '10mm' },
+        // worksheets draw the paper's border and right-hand hatched strip inside the page, so they need the room
+        margin: msLandscape ? { top: '10mm', bottom: '12mm', left: '10mm', right: '10mm' } : worksheet ? { top: '7mm', bottom: '14mm', left: '10mm', right: '2mm' } : { top: '12mm', bottom: '16mm', left: '10mm', right: '10mm' },
         displayHeaderFooter: true,
+        // a big worksheet (every question) takes Chrome well over the default 30 s
+        timeout: 600_000,
         headerTemplate: '<span></span>',
         footerTemplate: footer,
       });

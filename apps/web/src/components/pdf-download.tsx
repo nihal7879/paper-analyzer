@@ -7,21 +7,34 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { downloadPdf, originalPdfUrl, pdfParams, sourceLine, type AnswerMode, type PaperMeta, type PdfRequest } from "@/lib/api";
+import { downloadPdf, originalPdfUrl, pdfParams, sourceLine, type PaperMeta, type PdfRequest } from "@/lib/api";
 import type { BankEntry } from "@/lib/question-bank";
 import { groupKeyOf } from "@/lib/question-bank";
 import { selection } from "@/lib/selection";
 import { cn } from "@/lib/utils";
 
-const ANSWER_OPTIONS: { value: AnswerMode; label: React.ReactNode }[] = [
-  { value: "none", label: "No answers" },
-  { value: "end", label: <><span className="lg:hidden">At the end</span><span className="hidden lg:inline">Answers at end</span></> },
-  { value: "inline", label: <><span className="lg:hidden">After each</span><span className="hidden lg:inline">After each question</span></> },
+/** In this dialog the chosen option is filled in, so it is obvious which one is selected. */
+const PICKED = "bg-primary text-primary-foreground shadow-sm hover:text-primary-foreground";
+
+/** The teacher chooses each time: no answers, answers at the end of the worksheet, or a separate answer sheet. */
+type AnswerChoice = "none" | "end" | "separate";
+const ANSWER_OPTIONS: { value: AnswerChoice; label: React.ReactNode }[] = [
+  { value: "none", label: "No answers", activeClassName: PICKED },
+  { value: "end", label: <><span className="lg:hidden">At the end</span><span className="hidden lg:inline">Answers at end</span></>, activeClassName: PICKED },
+  { value: "separate", label: <><span className="lg:hidden">Separate</span><span className="hidden lg:inline">Separate answer sheet</span></>, activeClassName: PICKED },
+];
+
+/** Normal = our typed layout; past-paper style = the original paper's crops, border and side strip. */
+type PdfStyle = "normal" | "paper";
+const STYLE_OPTIONS: { value: PdfStyle; label: React.ReactNode }[] = [
+  { value: "normal", label: "Normal", activeClassName: PICKED },
+  { value: "paper", label: <><span className="lg:hidden">Past paper</span><span className="hidden lg:inline">Past-paper style</span></>, activeClassName: PICKED },
 ];
 
 /** Server PDF; if the server can't make it, open the print page so the browser can save it as PDF. */
 async function runPdf(req: PdfRequest, fileName: string) {
-  const id = toast.loading("Preparing your PDF…");
+  const big = (req.ids?.length ?? 0) > 60;
+  const id = toast.loading(big ? `Preparing your PDF (${req.ids!.length} parts): large selections can take up to a minute…` : "Preparing your PDF…");
   try {
     await downloadPdf(req, fileName);
     toast.success("PDF downloaded", { id });
@@ -160,14 +173,18 @@ export function SelectionStrip({ ids, byId, highlight, className }: { ids: strin
 function SelectionDialog({ open, onOpenChange, picked }: { open: boolean; onOpenChange: (o: boolean) => void; picked: BankEntry[] }) {
   const subjects = [...new Set(picked.map((e) => e.meta.subjectName))];
   const [title, setTitle] = useState("");
-  const [answers, setAnswers] = useState<AnswerMode>("end");
+  const [answers, setAnswers] = useState<AnswerChoice>("end");
+  const [style, setStyle] = useState<PdfStyle>("normal");
   const [busy, setBusy] = useState(false);
   const defaultTitle = `${subjects.length === 1 ? subjects[0] : "Practice"} questions`;
 
   async function download() {
     setBusy(true);
     const t = title.trim() || defaultTitle;
-    await runPdf({ ids: picked.map((e) => e.question.id), answers, title: t }, safeName(t));
+    const ids = picked.map((e) => e.question.id);
+    // Separate answer sheet: the worksheet without answers, then the answers as their own PDF
+    await runPdf({ ids, answers: answers === "separate" ? "none" : answers, title: t, style }, safeName(t));
+    if (answers === "separate") await runPdf({ ids, answers: "only", title: t, style }, safeName(`${t} - Answers`));
     setBusy(false);
     onOpenChange(false);
   }
@@ -175,7 +192,7 @@ function SelectionDialog({ open, onOpenChange, picked }: { open: boolean; onOpen
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       {/* Touch: don't focus the title box on open (it would pop up the keyboard); mouse/keyboard: as before */}
-      <DialogContent className="max-h-[90dvh] gap-4 overflow-y-auto sm:max-w-lg" initialFocus={(type) => type !== "touch"}>
+      <DialogContent className="max-h-[90dvh] gap-3 overflow-y-auto sm:max-w-lg" initialFocus={(type) => type !== "touch"}>
         <DialogHeader>
           <DialogTitle>Download PDF</DialogTitle>
           <DialogDescription>
@@ -183,16 +200,20 @@ function SelectionDialog({ open, onOpenChange, picked }: { open: boolean; onOpen
           </DialogDescription>
         </DialogHeader>
 
-        <div className="grid gap-2">
+        <div className="grid gap-1.5">
           <Label htmlFor="pdf-title">Title</Label>
           <Input id="pdf-title" className="text-base sm:text-sm" value={title} onChange={(e) => setTitle(e.target.value)} placeholder={defaultTitle} />
         </div>
-        <div className="grid gap-2">
+        <div className="grid gap-1.5">
+          <Label>Format</Label>
+          <Segmented value={style} onChange={setStyle} options={STYLE_OPTIONS} aria-label="Format" className="sm:w-full [&>button]:flex-1" />
+        </div>
+        <div className="grid gap-1.5">
           <Label>Answers</Label>
           <Segmented value={answers} onChange={setAnswers} options={ANSWER_OPTIONS} aria-label="Answers" className="sm:w-full [&>button]:flex-1" />
         </div>
 
-        <ul className="grid max-h-56 gap-1 overflow-y-auto rounded-lg border p-1">
+        <ul className="grid max-h-[min(9rem,22dvh)] gap-1 overflow-y-auto rounded-lg border p-1">
           {picked.map((e, i) => (
             <li key={e.key} className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-muted">
               <span className="w-5 text-right text-xs text-muted-foreground tabular-nums">{i + 1}</span>

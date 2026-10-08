@@ -100,3 +100,36 @@ export async function cropToWebp(pageImage: Buffer, box: Box, padding = 0.01): P
     .webp({ quality: 85 })
     .toBuffer();
 }
+
+/** Print quality: ~250 DPI (A4 is 595 x 842 pt, so scale 3.5 ≈ 2083 x 2947 px). */
+export const PRINT_SCALE = 3.5;
+
+/** Render only the given pages (1-based) of a PDF at print quality, for worksheet crops. */
+export async function renderPdfPagesAt(pdfBuffer: Buffer, pageNumbers: number[], scale = PRINT_SCALE): Promise<Map<number, Buffer>> {
+  const doc = await pdf(pdfBuffer, { scale, docInitParams: DOC_OPTIONS });
+  const out = new Map<number, Buffer>();
+  try {
+    for (const n of [...new Set(pageNumbers)].sort((a, b) => a - b)) if (n >= 1 && n <= doc.length) out.set(n, await doc.getPage(n));
+  } finally {
+    await doc.destroy();
+  }
+  return out;
+}
+
+/**
+ * Crop a whole question part for printing: the exact box (no padding, so spacing stays as on the paper).
+ * Greyscale JPEG: Chrome puts JPEGs into a PDF as they are (WebP gets re-encoded several times larger).
+ */
+export async function cropForPrint(pageImage: Buffer, box: Box): Promise<Buffer> {
+  const image = sharp(pageImage);
+  const { width = 0, height = 0 } = await image.metadata();
+  const left = Math.max(0, Math.floor(box.x0 * width));
+  const top = Math.max(0, Math.floor(box.y0 * height));
+  const right = Math.min(width, Math.ceil(box.x1 * width));
+  const bottom = Math.min(height, Math.ceil(box.y1 * height));
+  return image
+    .extract({ left, top, width: Math.max(1, right - left), height: Math.max(1, bottom - top) })
+    .greyscale()
+    .jpeg({ quality: 85, mozjpeg: true })
+    .toBuffer();
+}

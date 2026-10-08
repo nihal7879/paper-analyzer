@@ -517,6 +517,8 @@ export class PapersRepository {
     if (!rows.length) return [];
     const ids = rows.map((r) => r.id);
     const images = await this.db('question_images').whereIn('question_id', ids).where('kind', 'QUESTION').orderBy(['question_id', 'sort_order']);
+    // whole-question crops for worksheets (the question exactly as printed)
+    const fulls = await this.db('question_images').whereIn('question_id', ids).where('kind', 'FULL').orderBy(['question_id', 'page', 'sort_order']);
     const keywords = await this.db('question_keywords').whereIn('question_id', ids).select('question_id', 'keyword');
 
     return rows.map((r) => ({
@@ -540,6 +542,9 @@ export class PapersRepository {
         page: r.page,
         pages: r.pages ?? [r.page],
         images: images.filter((i) => i.question_id === r.id).map((i) => ({ path: i.file_path, page: i.page, box: i.box })),
+        crops: fulls.filter((i) => i.question_id === r.id && i.source !== 'MS').map((i) => ({ path: i.file_path, page: i.page, box: i.box })),
+        // the part's rows cut from the mark scheme (answers in the past-paper style)
+        msCrops: fulls.filter((i) => i.question_id === r.id && i.source === 'MS').map((i) => ({ path: i.file_path, page: i.page, box: i.box })),
         answer: r.hasAnswer ? { correctOption: r.correctOption, text: r.answerText ?? '' } : null,
         confidence: r.confidence ?? 1,
         status: r.status,

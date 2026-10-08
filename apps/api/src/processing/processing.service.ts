@@ -8,6 +8,7 @@ import { PapersRepository } from '../papers/papers.repository.js';
 import { paperKeys } from '../papers/paper-keys.js';
 import { collectAnswers, mergePages, questionId, type PageResult } from './merge.js';
 import { cropToWebp, isBlankPage, normaliseBox, pageTexts, renderPdfPages } from './pdf-images.js';
+import { QuestionCropsService } from './question-crops.service.js';
 
 const MS_PAGES_PER_CALL = 2;
 
@@ -21,6 +22,7 @@ export class ProcessingService {
     @Inject(EXTRACTION_PROVIDER) private readonly ai: ExtractionProvider,
     private readonly repo: PapersRepository,
     config: ConfigService<Env, true>,
+    private readonly crops: QuestionCropsService,
   ) {
     this.concurrency = config.get('AI_PAGE_CONCURRENCY', { infer: true });
   }
@@ -164,6 +166,10 @@ export class ProcessingService {
 
       await status({ message: 'Saving questions…', progress: 96 });
       await this.repo.saveExtraction(paperId, this.ai.name, this.ai.model, questions);
+      // Worksheet crops (each question exactly as printed, for downloaded worksheets). Not fatal: worksheets
+      // fall back to the text layout for any question without a crop, and the CLI can retry later.
+      await status({ message: 'Cutting worksheet crops…', progress: 97 });
+      await this.crops.buildForPaper(paperId).catch((err) => this.logger.warn(`${paperId}: worksheet crops skipped: ${(err as Error).message}`));
       const unmatched = msPages.length ? questions.filter((q) => !q.answer).length : 0;
       const pageList = (label: string, pages: number[]) =>
         pages.length ? `${label} page${pages.length > 1 ? 's' : ''} ${[...pages].sort((a, b) => a - b).join(', ')}` : '';

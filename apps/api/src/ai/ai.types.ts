@@ -42,6 +42,20 @@ export const markSchemeSchema = z.object({
   ),
 });
 
+/** Worksheet crops: where each whole question part is on one page (no retyping). */
+export const questionBoxesSchema = z.object({
+  boxes: z.array(
+    z.object({
+      number: z.string().describe('Question part number exactly as listed, e.g. "3(b)(ii)"'),
+      x0: z.number(),
+      y0: z.number(),
+      x1: z.number(),
+      y1: z.number(),
+    }),
+  ),
+});
+export type QuestionBoxes = z.infer<typeof questionBoxesSchema>;
+
 /** What the AI reads from a paper's cover page to fill in the paper details automatically. */
 export const paperDetailsSchema = z.object({
   document_type: z.enum(['QUESTION_PAPER', 'MARK_SCHEME', 'OTHER']),
@@ -81,6 +95,8 @@ export interface ExtractionProvider {
   readonly model: string;
   extractQuestionPage(ctx: PageContext): Promise<PageExtraction>;
   extractMarkSchemePage(ctx: PageContext): Promise<MarkSchemePage>;
+  /** Worksheet crops: one box per listed question part on this page (fractions of the page). */
+  findQuestionBoxes(image: Buffer, pageNumber: number, parts: string[]): Promise<QuestionBoxes>;
   /** Read the cover page (page 1) to identify board, subject, paper, year and session. */
   detectPaperDetails(image: Buffer, fileName: string): Promise<PaperDetails>;
 }

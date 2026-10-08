@@ -56,6 +56,10 @@ export interface Question {
   pages: number[];
   /** path = cropped image file; null = crop the page image on the fly. */
   images: { path: string | null; page: number; box: { x0: number; y0: number; x1: number; y1: number } }[];
+  /** The whole question part cut from the paper (one per page), for worksheets that look like the real paper. */
+  crops?: { path: string | null; page: number; box: { x0: number; y0: number; x1: number; y1: number; num?: { x: number; y: number; h: number } } }[];
+  /** The part's rows cut from the mark scheme (head = the table's grey header row, on the first crop). */
+  msCrops?: { path: string | null; page: number; box: { x0: number; y0: number; x1: number; y1: number; head?: string; num?: { x: number; y: number; h: number } } }[];
   answer: { correctOption: string | null; text: string } | null;
   confidence: number;
   status: "DRAFT" | "VERIFIED" | "PUBLISHED";
@@ -262,7 +266,7 @@ export function isProcessing(status: PaperStatus | null): boolean {
 // ---------------------------------------------------------------- PDF downloads
 
 /** none = questions only · end = answers on their own pages at the end · inline = answer under each question */
-export type AnswerMode = "none" | "end" | "inline";
+export type AnswerMode = "none" | "end" | "inline" | "only";
 
 /** Selected questions (ids, in order) or a whole published paper. */
 export interface PdfRequest {
@@ -270,6 +274,8 @@ export interface PdfRequest {
   paper?: string;
   answers: AnswerMode;
   title?: string;
+  /** "paper" = past-paper style (original crops, border, strip); default = the normal typed layout */
+  style?: "normal" | "paper";
 }
 
 export function pdfParams(r: PdfRequest): URLSearchParams {
@@ -278,29 +284,33 @@ export function pdfParams(r: PdfRequest): URLSearchParams {
   if (r.ids?.length) p.set("ids", r.ids.join(","));
   p.set("answers", r.answers);
   if (r.title?.trim()) p.set("title", r.title.trim());
+  if (r.style === "paper") p.set("style", "paper");
   return p;
 }
 
-/** The server renders the print page in Chrome and returns a PDF file. */
+/**
+ * The server renders the print page in Chrome and keeps the PDF under a token; the browser then downloads it
+ * with a plain link, so the file goes straight to disk. (Reading a big PDF into the page's memory first fails
+ * in Chrome when the disk is nearly full: "Failed to fetch".) The ids go in the body, so any selection size works.
+ */
 export async function downloadPdf(r: PdfRequest, fileName: string): Promise<void> {
   let res: Response;
   try {
-    res = await fetch(`${API_URL}/api/bank/pdf?${pdfParams(r)}`);
+    res = await fetch(`${API_URL}/api/bank/pdf`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...r, fileName: fileName.replace(/\.pdf$/i, "") }),
+    });
   } catch {
     throw new ApiError("Cannot reach the API server. Is it running?", 0);
   }
-  if (!res.ok) {
-    const body = await res.json().catch(() => null);
-    throw new ApiError(body?.message || `PDF failed (${res.status})`, res.status);
-  }
-  const url = URL.createObjectURL(await res.blob());
+  const body = await res.json().catch(() => null);
+  if (!res.ok || !body?.token) throw new ApiError(body?.message || `PDF failed (${res.status})`, res.status);
   const a = document.createElement("a");
-  a.href = url;
-  a.download = fileName.endsWith(".pdf") ? fileName : `${fileName}.pdf`;
+  a.href = `${API_URL}/api/bank/pdf/file/${encodeURIComponent(body.token)}`;
   document.body.append(a);
   a.click();
   a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 30_000);
 }
 
 /** The uploaded original question paper / mark scheme. */

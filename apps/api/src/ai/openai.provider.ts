@@ -8,11 +8,13 @@ import {
   type PageContext,
   type PageExtraction,
   type PaperDetails,
+  type QuestionBoxes,
   markSchemeSchema,
+  questionBoxesSchema,
   pageExtractionSchema,
   paperDetailsSchema,
 } from './ai.types.js';
-import { coverPagePrompt, markSchemePagePrompt, questionPagePrompt } from './prompts.js';
+import { coverPagePrompt, markSchemePagePrompt, questionBoxesPrompt, questionPagePrompt } from './prompts.js';
 
 export class OpenAiExtractionProvider implements ExtractionProvider {
   readonly name = 'openai';
@@ -37,6 +39,10 @@ export class OpenAiExtractionProvider implements ExtractionProvider {
 
   detectPaperDetails(image: Buffer, fileName: string): Promise<PaperDetails> {
     return this.call(image, 'cover page', coverPagePrompt(fileName), paperDetailsSchema, 'paper_details');
+  }
+
+  findQuestionBoxes(image: Buffer, pageNumber: number, parts: string[]): Promise<QuestionBoxes> {
+    return this.call(image, `question boxes, page ${pageNumber}`, questionBoxesPrompt(pageNumber, parts), questionBoxesSchema, 'question_boxes');
   }
 
   private async call<S extends z.ZodType>(image: Buffer | Buffer[], label: string, prompt: string, schema: S, name: string): Promise<z.infer<S>> {

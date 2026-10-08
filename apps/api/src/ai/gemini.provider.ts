@@ -6,11 +6,13 @@ import {
   type PageContext,
   type PageExtraction,
   type PaperDetails,
+  type QuestionBoxes,
   markSchemeSchema,
+  questionBoxesSchema,
   pageExtractionSchema,
   paperDetailsSchema,
 } from './ai.types.js';
-import { coverPagePrompt, markSchemePagePrompt, questionPagePrompt } from './prompts.js';
+import { coverPagePrompt, markSchemePagePrompt, questionBoxesPrompt, questionPagePrompt } from './prompts.js';
 
 const ENDPOINT = 'https://generativelanguage.googleapis.com/v1beta/models';
 const RETRYABLE = new Set([429, 500, 502, 503, 504]);
@@ -50,6 +52,10 @@ export class GeminiExtractionProvider implements ExtractionProvider {
 
   detectPaperDetails(image: Buffer, fileName: string): Promise<PaperDetails> {
     return this.call([image], 'cover page', coverPagePrompt(fileName), paperDetailsSchema);
+  }
+
+  findQuestionBoxes(image: Buffer, pageNumber: number, parts: string[]): Promise<QuestionBoxes> {
+    return this.call([image], `question boxes, page ${pageNumber}`, questionBoxesPrompt(pageNumber, parts), questionBoxesSchema);
   }
 
   private async call<S extends z.ZodType>(images: Buffer[], label: string, prompt: string, schema: S): Promise<z.infer<S>> {

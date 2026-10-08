@@ -1,4 +1,4 @@
-import type { ExtractionProvider, MarkSchemePage, PageContext, PageExtraction, PaperDetails } from './ai.types.js';
+import type { ExtractionProvider, MarkSchemePage, PageContext, PageExtraction, PaperDetails, QuestionBoxes } from './ai.types.js';
 
 /**
  * Returns fixed sample data so the whole upload -> process -> view flow works
@@ -113,6 +113,14 @@ export class MockExtractionProvider implements ExtractionProvider {
       });
     }
     return { answers };
+  }
+
+  /** Mock can't see the page: splits the text area evenly between the listed parts (enough to try the worksheet flow). */
+  async findQuestionBoxes(_image: Buffer, _pageNumber: number, parts: string[]): Promise<QuestionBoxes> {
+    await delay(200);
+    const top = 0.08;
+    const step = (0.9 - top) / Math.max(1, parts.length);
+    return { boxes: parts.map((number, i) => ({ number, x0: 0.12, y0: top + i * step, x1: 0.88, y1: top + (i + 1) * step })) };
   }
 
   /** Mock can't read the page: returns a fixed Cambridge Physics paper so the upload flow can be tried without a key. */

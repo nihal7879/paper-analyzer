@@ -3,6 +3,7 @@ import { useSearchParams } from "react-router";
 import { MathText } from "@/components/math-text";
 import { fileUrl, sourceLine, type AnswerMode } from "@/lib/api";
 import { useEntries, usePaperEntries } from "@/lib/bank-api";
+import { Worksheet } from "@/components/worksheet";
 import type { BankEntry } from "@/lib/question-bank";
 
 declare global {
@@ -14,12 +15,12 @@ declare global {
 
 /**
  * Print layout for PDFs: /print?ids=1,2,3 (selected, in that order) or /print?paper=<id> (whole paper),
- * &answers=none|end|inline, &title=…  The API opens this page in Chrome and saves it as PDF.
+ * &answers=none|end|inline|only, &title=…, &style=paper (past-paper style worksheet; default the normal layout)  The API opens this page in Chrome and saves it as PDF.
  * With &print=1 the browser's own print dialog opens instead (fallback when the server can't make the PDF).
  */
 export function PrintPage() {
   const [params] = useSearchParams();
-  const answers = (["none", "end", "inline"].includes(params.get("answers") ?? "") ? params.get("answers") : "none") as AnswerMode;
+  const answers = (["none", "end", "inline", "only"].includes(params.get("answers") ?? "") ? params.get("answers") : "none") as AnswerMode;
   const paperId = params.get("paper");
   const idList = useMemo(() => (params.get("ids") ?? "").split(",").filter(Boolean), [params]);
 
@@ -32,6 +33,8 @@ export function PrintPage() {
   const title = params.get("title") || (paperId && items[0] ? sourceLine(items[0].meta) : "Practice questions");
   const marks = items.reduce((s, e) => s + (e.question.marks ?? 0), 0);
   const single = paperId != null;
+  const paperStyle = !single && params.get("style") === "paper";
+  const answersOnly = answers === "only";
 
   // Paper is always white, whatever the app theme.
   useEffect(() => {
@@ -73,15 +76,19 @@ export function PrintPage() {
   if (loading) return <p className="p-10 text-sm">Loading…</p>;
   if (items.length === 0) return <p className="p-10 text-sm">No published questions found for this PDF.</p>;
 
+  // Selected questions: a worksheet in the paper's layout. Past-paper style = the original crops; Normal = our text.
+  if (!single) return <Worksheet items={items} title={title} answers={answers === "inline" ? "end" : answers} typed={!paperStyle} />;
+
   return (
     <div className="print-doc mx-auto max-w-[780px] bg-white px-8 py-8 text-[13px] leading-relaxed text-black">
       <header className="mb-6 border-b-2 border-black pb-3">
-        <h1 className="text-xl font-bold">{title}</h1>
+        <h1 className="text-xl font-bold">{answersOnly ? `${title}: Answers` : title}</h1>
         <p className="mt-1 text-xs text-neutral-600">
           {items.length} question{items.length === 1 ? "" : "s"} · {marks} marks
         </p>
       </header>
 
+      {!answersOnly && (
       <ol className="space-y-6">
         {items.map((e, i) => (
           <li key={e.key} className="print-question space-y-2.5">
@@ -120,10 +127,11 @@ export function PrintPage() {
           </li>
         ))}
       </ol>
+      )}
 
-      {answers === "end" && (
-        <section className="print-answers mt-10">
-          <h2 className="mb-4 border-b-2 border-black pb-2 text-lg font-bold">Answers</h2>
+      {(answers === "end" || answersOnly) && (
+        <section className={answersOnly ? undefined : "print-answers mt-10"}>
+          {!answersOnly && <h2 className="mb-4 border-b-2 border-black pb-2 text-lg font-bold">Answers</h2>}
           <ol className="space-y-4">
             {items.map((e, i) => (
               <li key={e.key} className="print-question print-keep space-y-1">
