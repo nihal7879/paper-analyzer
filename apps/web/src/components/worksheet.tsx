@@ -68,7 +68,8 @@ export function toWholeQuestions(items: BankEntry[]): WholeQuestion[] {
 
 export function Worksheet({ items, title, answers, typed = false }: { items: BankEntry[]; title: string; answers: Mode; typed?: boolean }) {
   const questions = toWholeQuestions(items);
-  const msLandscape = answers === "only" && !typed;
+  // answer pages are always portrait like the question pages (past-paper rows are scaled to the page width)
+  const msLandscape = false;
   const total = questions.reduce((s, q) => s + q.marks, 0);
   const subjects = [...new Set(items.map((e) => `${e.meta.board} ${e.meta.curriculum.split(/\s+/).filter((w) => !e.meta.board.split(/\s+/).includes(w)).join(" ")} ${e.meta.subjectName}`.replace(/\s+/g, " ").trim()))];
 
@@ -96,7 +97,7 @@ export function Worksheet({ items, title, answers, typed = false }: { items: Ban
             <h1>{title}: Answers</h1>
             <p>{subjects.join(" · ")} · {questions.length} question{questions.length === 1 ? "" : "s"} · {total} marks</p>
           </header>
-          {typed ? <MarkScheme questions={questions} /> : <MarkSchemeCrops questions={questions} landscape />}
+          {typed ? <MarkScheme questions={questions} /> : <MarkSchemeCrops questions={questions} landscape={false} />}
         </>
       ) : (
         <>

@@ -100,7 +100,8 @@ export class PdfService implements OnModuleDestroy {
     params.set('answers', answers);
     // answers on their own: the mark scheme's look (no border/strip); landscape in the past-paper style
     const answersOnly = o.worksheet && answers === 'only';
-    const landscape = answersOnly && o.paperStyle;
+    // answer pages stay portrait, the same page size as the questions (mark-scheme crops are scaled to fit)
+    const landscape = false;
     const browser = await this.getBrowser();
     const page = await browser.newPage();
     try {
