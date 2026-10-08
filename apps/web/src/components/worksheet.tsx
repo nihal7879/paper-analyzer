@@ -73,10 +73,11 @@ export function Worksheet({ items, title, answers, typed = false }: { items: Ban
   const subjects = [...new Set(items.map((e) => `${e.meta.board} ${e.meta.curriculum.split(/\s+/).filter((w) => !e.meta.board.split(/\s+/).includes(w)).join(" ")} ${e.meta.subjectName}`.replace(/\s+/g, " ").trim()))];
 
   return (
-    <div className={msLandscape ? "ws-doc ws-landscape" : "ws-doc"}>
+    <div className={msLandscape ? "ws-doc ws-landscape" : answers === "only" ? "ws-doc ws-plain" : "ws-doc"}>
       <style>{WORKSHEET_CSS}</style>
-      {msLandscape ? (
-        <style>{LANDSCAPE_CSS}</style>
+      {/* Answer pages look like the mark scheme: no page border or "do not write" strip */}
+      {answers === "only" ? (
+        <style>{msLandscape ? LANDSCAPE_CSS : PLAIN_CSS}</style>
       ) : (
         <>
           {/* The paper's page design, repeated on every printed page: rounded border + hatched side strip */}
@@ -400,7 +401,7 @@ function MarkSchemeCrops({ questions, landscape }: { questions: WholeQuestion[];
         const ph = first.ph ?? 210;
         const scale = landscape ? 1 : Math.min(1, PORTRAIT_MS_MM / ((first.x1 - first.x0) * pw));
         const mm = (v: number) => `${v.toFixed(2)}mm`;
-        const left = landscape ? `calc(${first.x0} * ${pw}mm - 10mm)` : "0mm";
+        const left = landscape ? `calc(${first.x0} * ${pw}mm - 10mm)` : "3mm"; // portrait: just inside the page border
         const width = (b: { x0: number; x1: number }) => mm((b.x1 - b.x0) * pw * scale);
         return (
           <section key={q.key} className="ws-msq">
@@ -455,6 +456,17 @@ function MarkSchemeCrops({ questions, landscape }: { questions: WholeQuestion[];
   );
 }
 
+
+/** Answer pages in the Normal format: plain portrait pages (no border or strip; see pdf.service margins). */
+const PLAIN_CSS = `
+@page { size: A4; margin: 12mm 10mm 16mm 10mm; }
+@media print {
+  .ws-plain.ws-doc { width: 190mm; }
+  .ws-plain .ws-pages { width: 190mm; }
+  .ws-plain .ws-answers-head { margin: 0; }
+  .ws-plain .ws-ms-q { margin-left: 0; margin-right: 0; }
+}
+`;
 
 /** Separate answer sheet in the past-paper style: landscape A4 like the real mark scheme (see pdf.service). */
 const LANDSCAPE_CSS = `

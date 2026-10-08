@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, InternalServerErrorException, Logger, 
 import { ConfigService } from '@nestjs/config';
 import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
+import { PDFDocument } from 'pdf-lib';
 import puppeteer, { type Browser } from 'puppeteer-core';
 import type { Env } from '../config/env.js';
 
@@ -71,15 +72,35 @@ export class PdfService implements OnModuleDestroy {
       if (!ids.every((id) => /^\d{1,10}$/.test(id))) throw new BadRequestException('Invalid question ids');
       params.set('ids', ids.join(','));
     }
-    params.set('answers', answers);
     const paperStyle = !q.paper && q.style === 'paper';
-    // every selection is a worksheet in the paper's layout (border + strip need the wider printable area)
+    // every selection is a worksheet in the paper's layout
     const worksheet = !q.paper;
-    // the past-paper style answer sheet is landscape, like the real mark scheme (no border or strip)
-    const msLandscape = paperStyle && answers === 'only';
     if (paperStyle) params.set('style', 'paper');
     if (q.title) params.set('title', q.title.slice(0, 150));
 
+    // Answers at the end of a worksheet: the answer pages are made as their own document (like the real mark
+    // scheme: no page border or "do not write" strip; landscape in the past-paper style) and joined after the
+    // questions. (The border and strip repeat on every page of one document, so they can't skip the answers.)
+    if (worksheet && (answers === 'end' || answers === 'inline')) {
+      const questions = await this.print(q, params, 'none', { worksheet, paperStyle });
+      const answerPages = await this.print(q, params, 'only', { worksheet, paperStyle });
+      const out = await PDFDocument.create();
+      for (const buf of [questions, answerPages]) {
+        const doc = await PDFDocument.load(buf);
+        for (const p of await out.copyPages(doc, doc.getPageIndices())) out.addPage(p);
+      }
+      return Buffer.from(await out.save());
+    }
+    return this.print(q, params, answers, { worksheet, paperStyle });
+  }
+
+  /** One pass of Chrome over the /print page. */
+  private async print(q: PdfQuery, base: URLSearchParams, answers: string, o: { worksheet: boolean; paperStyle: boolean }): Promise<Buffer> {
+    const params = new URLSearchParams(base);
+    params.set('answers', answers);
+    // answers on their own: the mark scheme's look (no border/strip); landscape in the past-paper style
+    const answersOnly = o.worksheet && answers === 'only';
+    const landscape = answersOnly && o.paperStyle;
     const browser = await this.getBrowser();
     const page = await browser.newPage();
     try {
@@ -89,10 +110,14 @@ export class PdfService implements OnModuleDestroy {
         <span>${escapeHtml(q.title ?? '')}</span><span><span class="pageNumber"></span> / <span class="totalPages"></span></span></div>`;
       const pdf = await page.pdf({
         format: 'A4',
-        landscape: msLandscape,
+        landscape,
         printBackground: true,
-        // worksheets draw the paper's border and right-hand hatched strip inside the page, so they need the room
-        margin: msLandscape ? { top: '10mm', bottom: '12mm', left: '10mm', right: '10mm' } : worksheet ? { top: '7mm', bottom: '14mm', left: '10mm', right: '2mm' } : { top: '12mm', bottom: '16mm', left: '10mm', right: '10mm' },
+        // question pages draw the paper's border and right-hand hatched strip inside the page, so they need the room
+        margin: landscape
+          ? { top: '10mm', bottom: '12mm', left: '10mm', right: '10mm' }
+          : o.worksheet && !answersOnly
+            ? { top: '7mm', bottom: '14mm', left: '10mm', right: '2mm' }
+            : { top: '12mm', bottom: '16mm', left: '10mm', right: '10mm' },
         displayHeaderFooter: true,
         // a big worksheet (every question) takes Chrome well over the default 30 s
         timeout: 600_000,

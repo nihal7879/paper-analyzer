@@ -185,10 +185,27 @@ export function BrowsePage() {
   const selectedSet = useMemo(() => new Set(selected), [selected]);
   const resultIds = idsQuery.data?.ids ?? [];
   const allResultsSelected = resultIds.length > 0 && resultIds.every((id) => selectedSet.has(id));
+  // Questions added by "Select all" (not ones ticked one by one): they belong to that filter, so they're
+  // dropped again when the filter changes. Hand-picked questions stay selected across filters.
+  const bulkPicked = useRef<string[]>([]);
   const selectAll = async () => {
     const ids = idsQuery.data?.ids ?? (await fetchIds(filters)).ids;
-    (allResultsSelected ? selection.removeMany : selection.addMany)(ids);
+    if (allResultsSelected) {
+      selection.removeMany(ids);
+      bulkPicked.current = [];
+    } else {
+      bulkPicked.current = [...bulkPicked.current, ...ids.filter((id) => !selectedSet.has(id))];
+      selection.addMany(ids);
+    }
   };
+  const filterKey = filtersToParams(filters, "newest").toString();
+  const lastFilterKey = useRef(filterKey);
+  useEffect(() => {
+    if (lastFilterKey.current === filterKey) return;
+    lastFilterKey.current = filterKey;
+    if (bulkPicked.current.length) selection.removeMany(bulkPicked.current);
+    bulkPicked.current = [];
+  }, [filterKey]);
 
   const update = useCallback((next: Partial<Filters>, nextSort?: SortKey) => {
     setFilters((f) => ({ ...f, ...next }));
