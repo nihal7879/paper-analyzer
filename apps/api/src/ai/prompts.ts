@@ -25,7 +25,21 @@ ${topicList}
 - subtopic: if the chosen topic lists subtopics, copy the best-fitting one EXACTLY as written. Only if none fits, write a short, specific syllabus subtopic (e.g. "Momentum and impulse").
 - difficulty: EASY (recall / one step), MEDIUM (two or three steps), HARD (multi-step, unfamiliar context or synthesis).
 - keywords: 5-10 lowercase concept keywords a student might search for.
-- confidence: lower it if text is hard to read or the layout is unusual.`;
+- confidence: lower it if text is hard to read or the layout is unusual.${focusNote(ctx)}`;
+}
+
+/** Regenerating one question: read it again carefully, guided by the admin's note. */
+function focusNote(ctx: PageContext): string {
+  if (!ctx.focus) return '';
+  const note = ctx.focus.note?.trim();
+  const lines = [
+    '',
+    '',
+    `This is a re-read of ONE question that an admin is correcting: question ${ctx.focus.number}.`,
+    `- Read question ${ctx.focus.number} again carefully and return it with exactly that number (other questions on the page may be returned too).`,
+  ];
+  if (note) lines.push(`- The admin's note about what was wrong (follow it, but never invent content that is not on the page): ${JSON.stringify(note)}`);
+  return lines.join('\n');
 }
 
 export function markSchemePagePrompt(ctx: PageContext): string {
@@ -40,7 +54,7 @@ Rules:
 - MCQ answer grids: one entry per question with correct_option = the letter, and answer_text = the letter.
 - Structured answers: answer_text = the marking points as Markdown, one per line, keeping mark codes (B1, M1, A1, C1). Use LaTeX ($...$) for maths and units.
 - Ignore generic marking guidance, cover pages and abbreviations pages (return an empty "answers" array).
-- Do not invent answers.`;
+- Do not invent answers.${focusNote(ctx)}`;
 }
 
 export function coverPagePrompt(fileName: string): string {

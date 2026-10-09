@@ -7,7 +7,10 @@ const envSchema = z
     STORAGE_ROOT: z.string().default('D:/paper-analyzer-storage'),
     ADMIN_PASSWORD: z.string().min(4, 'ADMIN_PASSWORD must be at least 4 characters'),
     JWT_SECRET: z.string().min(16, 'JWT_SECRET must be at least 16 characters'),
-    AI_PROVIDER: z.enum(['mock', 'openai', 'gemini']).default('mock'),
+    AI_PROVIDER: z.enum(['mock', 'openai', 'gemini', 'claude']).default('mock'),
+    // Claude (Anthropic)
+    ANTHROPIC_API_KEY: z.string().optional(),
+    CLAUDE_MODEL: z.string().default('claude-opus-5-5'),
     OPENAI_API_KEY: z.string().optional(),
     OPENAI_MODEL: z.string().optional(),
     GEMINI_API_KEY: z.string().optional(),
@@ -36,6 +39,9 @@ const envSchema = z
       if (!env.OPENAI_MODEL) {
         ctx.addIssue({ code: 'custom', path: ['OPENAI_MODEL'], message: 'required when AI_PROVIDER=openai' });
       }
+    }
+    if (env.AI_PROVIDER === 'claude' && !env.ANTHROPIC_API_KEY) {
+      ctx.addIssue({ code: 'custom', path: ['ANTHROPIC_API_KEY'], message: 'required when AI_PROVIDER=claude' });
     }
     if (env.AI_PROVIDER === 'gemini' && !env.GEMINI_API_KEY) {
       ctx.addIssue({ code: 'custom', path: ['GEMINI_API_KEY'], message: 'required when AI_PROVIDER=gemini' });

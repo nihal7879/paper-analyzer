@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAdmin } from "@/lib/admin";
+import { AdminMenu } from "@/components/admin-menu";
 import { sourceLine } from "@/lib/api";
 import { difficultyLabel, difficultyStyle, typeLabel } from "@/lib/format";
 import { useEntries } from "@/lib/bank-api";
@@ -95,7 +96,7 @@ export function SimilarPage() {
     <div className={cn("grid grid-cols-[minmax(0,1fr)] gap-4", selected.length > 0 && "pb-20")}>
       {/* Header */}
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-        {!isAdmin && <Logo compact />}
+        <Logo compact />
         <Button variant="outline" className="gap-1.5" onClick={back}>
           <ArrowLeft className="size-4" /> Back to questions
         </Button>
@@ -103,6 +104,11 @@ export function SimilarPage() {
           <Sparkles className="size-5 text-primary" /> Similar questions
         </h1>
         <span className="text-sm text-muted-foreground">to {sourceLine(origin.meta, origin.question.number)}</span>
+        {isAdmin && (
+          <div className="ml-auto">
+            <AdminMenu />
+          </div>
+        )}
       </div>
 
       <div className="grid grid-cols-[minmax(0,1fr)] items-start gap-4 lg:grid-cols-[300px_minmax(0,1fr)] lg:gap-6">

@@ -2,7 +2,7 @@
  * Shared types and helpers for reviewing questions.
  * Edits, verify, delete and publish are saved in the database through the API (see lib/api.ts).
  */
-import { fileUrl, type Question, type QuestionPatch } from "@/lib/api";
+import { api, fileUrl, type Question, type QuestionPatch } from "@/lib/api";
 
 export type Box = { x0: number; y0: number; x1: number; y1: number };
 
@@ -18,18 +18,14 @@ export type ReviewedQuestion = Question;
 
 export type QuestionEdit = Omit<QuestionPatch, "verify">;
 
-export function pageImageUrl(paperId: string, page: number): string {
-  return fileUrl(`papers/${paperId}/pages/qp-p${page}.png`);
+export function pageImageUrl(paperId: string, page: number, kind: "qp" | "ms" = "qp"): string {
+  return fileUrl(`papers/${paperId}/pages/${kind}-p${page}.png`);
 }
 
 /**
- * Ask the AI to read one question again, guided by the admin's hint.
- * The backend endpoint for this is not built yet.
+ * Ask the AI (the one chosen in Settings) to read one question again, guided by the admin's hint: its page(s) and,
+ * when known, its mark-scheme page. Returns the new fields only; nothing is saved until the admin clicks Save.
  */
-export async function regenerateQuestion(paperId: string, questionId: string, hint: string): Promise<QuestionEdit> {
-  void paperId;
-  void questionId;
-  void hint;
-  await new Promise((r) => setTimeout(r, 400));
-  throw new Error("AI regenerate for a single question is not available yet. Edit the fields, or re-process the paper.");
+export function regenerateQuestion(paperId: string, questionId: string, hint: string): Promise<QuestionEdit> {
+  return api.regenerateQuestion(paperId, questionId, hint.trim());
 }

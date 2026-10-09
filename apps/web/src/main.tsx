@@ -8,14 +8,12 @@ import "./index.css";
 import { Providers } from "@/components/providers";
 import { RouteError } from "@/components/route-error";
 import { SimilarModalHost } from "@/components/similar-modal";
-import { TopBar } from "@/components/top-bar";
 import { Skeleton } from "@/components/ui/skeleton";
 
 
 function Layout() {
   return (
     <Providers>
-      <TopBar />
       <main className="mx-auto w-full max-w-7xl flex-1 px-3 pt-[max(0.75rem,env(safe-area-inset-top))] pb-4 sm:px-4 sm:pt-4 sm:pb-8">
         <Outlet />
       </main>
@@ -52,7 +50,6 @@ const router = createBrowserRouter([
     element: <Layout />,
     errorElement: (
       <Providers>
-        <TopBar />
         <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-6">
           <RouteError />
         </main>
@@ -65,6 +62,7 @@ const router = createBrowserRouter([
       { path: "/similar/:id", lazy: () => import("@/pages/similar").then((m) => ({ Component: m.SimilarPage })) },
       { path: "/admin/papers", lazy: () => import("@/pages/admin-papers").then((m) => ({ Component: m.AdminPapersPage })) },
       { path: "/admin/papers/:id", lazy: () => import("@/pages/review").then((m) => ({ Component: m.ReviewPage })) },
+      { path: "/admin/settings", lazy: () => import("@/pages/admin-settings").then((m) => ({ Component: m.AdminSettingsPage })) },
       { path: "/admin/upload", lazy: () => import("@/pages/upload").then((m) => ({ Component: m.UploadPage })) },
       // Admin entry point (password prompt if not signed in)
       { path: "/admin", loader: () => redirect("/admin/papers") },

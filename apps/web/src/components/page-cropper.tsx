@@ -20,7 +20,10 @@ export function PageCropper({
   initialPage,
   regions,
   onChange,
+  kind = "qp",
 }: {
+  /** which PDF the pages come from: question paper (default) or mark scheme */
+  kind?: "qp" | "ms";
   paperId: string;
   pages: number[];
   initialPage: number;
@@ -110,7 +113,7 @@ export function PageCropper({
             onPointerCancel={onPointerUp}
           >
             <img
-              src={pageImageUrl(paperId, page)}
+              src={pageImageUrl(paperId, page, kind)}
               alt={`Original page ${page}`}
               draggable={false}
               className="block w-full bg-white"
@@ -159,7 +162,7 @@ export function PageCropper({
               onClick={() => setPage(r.page)}
               className={cn("group relative overflow-hidden rounded-lg border bg-white p-1 text-left", r.page === page && "ring-2 ring-primary/40")}
             >
-              <CropImage src={pageImageUrl(paperId, r.page)} box={r.box} alt={`Figure ${i + 1}`} />
+              <CropImage src={pageImageUrl(paperId, r.page, kind)} box={r.box} alt={`Figure ${i + 1}`} />
               <span className="absolute bottom-1 left-1 rounded bg-black/60 px-1.5 py-0.5 text-[10px] text-white">
                 Fig {i + 1} · p{r.page}
               </span>

@@ -5,6 +5,7 @@ import { AuthModule } from './auth/auth.module.js';
 import { validateEnv } from './config/env.js';
 import { DatabaseModule } from './database/database.module.js';
 import { PapersModule } from './papers/papers.module.js';
+import { SettingsModule } from './settings/settings.module.js';
 import { StorageModule } from './storage/storage.module.js';
 
 @Controller('health')
@@ -27,6 +28,7 @@ class HealthController {
     DatabaseModule,
     AuthModule,
     PapersModule,
+    SettingsModule,
   ],
   controllers: [HealthController],
 })

@@ -87,6 +87,8 @@ export interface PageContext {
   subjectCode: string;
   componentName: string | null;
   topics: { code: string; name: string; subtopics?: { code: string; name: string }[] }[];
+  /** Regenerate one question: the part to read again, and the admin's note about what to fix. */
+  focus?: { number: string; note?: string };
 }
 
 /** Swap implementations via AI_PROVIDER in .env. */

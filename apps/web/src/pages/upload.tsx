@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeftRight, Check, FileCheck2, FileUp, Loader2, LockKeyhole, Pencil, Sparkles, TriangleAlert, X } from "lucide-react";
+import { AdminPageBar } from "@/components/admin-menu";
 import { useEffect, useRef, useState } from "react";
 import { useDropzone } from "react-dropzone";
 import { useNavigate } from "react-router";
@@ -209,7 +210,8 @@ function UploadForm() {
 
   return (
     <div className="mx-auto grid max-w-3xl gap-6">
-      <div className="grid gap-1">
+      <AdminPageBar />
+      <div className="-mt-2 grid gap-1">
         <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">Upload paper</h1>
         <p className="text-muted-foreground">Drop the question paper and its mark scheme. The AI reads the cover page and fills in the paper details for you.</p>
       </div>

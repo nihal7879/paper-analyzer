@@ -54,6 +54,19 @@ export async function pageTexts(pdfBuffer: Buffer): Promise<string[]> {
   }
 }
 
+/** A pdf.js document (for reading text positions); call `close` when done. */
+export async function openPdf(pdfBuffer: Buffer) {
+  const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
+  const doc = await pdfjs.getDocument({ data: new Uint8Array(pdfBuffer), verbosity: 0, ...DOC_OPTIONS }).promise;
+  return {
+    doc,
+    close: async () => {
+      await doc.cleanup();
+      await doc.loadingTask.destroy();
+    },
+  };
+}
+
 /** A page that only contains "BLANK PAGE" (plus page furniture like a barcode / page number). */
 export function isBlankPage(text: string): boolean {
   return /\bBLANK\s+PAGE\b/i.test(text) && text.length < 120;

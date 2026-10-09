@@ -22,7 +22,7 @@ try {
   for (const slug of slugs) {
     try {
       const r = await crops.buildForPaper(slug, { onlyMissing: args.includes('--missing') });
-      console.log(`${slug}: ${r.crops} crops, ${r.parts - r.notFound.length}/${r.parts} parts${r.notFound.length ? ` · no box: ${r.notFound.join(', ')}` : ''}`);
+      console.log(`${slug}: cut ${r.qp} question + ${r.ms} mark-scheme parts · ${r.parts - r.notFound.length}/${r.parts} parts have a question crop${r.notFound.length ? ` · none: ${r.notFound.join(', ')}` : ''}`);
     } catch (err) {
       console.error(`${slug}: failed: ${(err as Error).message}`);
     }

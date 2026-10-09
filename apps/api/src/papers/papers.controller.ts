@@ -9,6 +9,7 @@ import {
   ParseIntPipe,
   Patch,
   Post,
+  Put,
   Query,
   Res,
   StreamableFile,
@@ -120,9 +121,104 @@ export class PapersController {
     await this.papers.setDeleted(id, qid, false);
   }
 
+  /** Re-cut the paper's worksheet crops (question paper + mark scheme). */
+  @Post(':id/crops')
+  @HttpCode(200)
+  rebuildCrops(@Param('id') id: string) {
+    return this.papers.rebuildCrops(id);
+  }
+
+  /** Save a part's hand-drawn crop box(es): { source: 'QP' | 'MS', regions: [{ page, box }] }. */
+  @Put(':id/questions/:qid/crops')
+  setCrops(@Param('id') id: string, @Param('qid', ParseIntPipe) qid: number, @Body() body: unknown) {
+    return this.papers.setCrops(id, qid, body);
+  }
+
+  // ---------------------------------------------------------------- versions, checks, AI draft, part tools
+
+  /** Backups of the paper (automatic before risky actions), newest first. */
+  @Get(':id/versions')
+  versions(@Param('id') id: string) {
+    return this.papers.versionsList(id);
+  }
+
+  /** The parts saved in one backup (to restore just one). */
+  @Get(':id/versions/:vid/parts')
+  versionParts(@Param('id') id: string, @Param('vid', ParseIntPipe) vid: number) {
+    return this.papers.versionParts(id, vid);
+  }
+
+  /** Save a backup now: { label? } */
+  @Post(':id/versions')
+  backupNow(@Param('id') id: string, @Body() body: unknown) {
+    return this.papers.backupNow(id, body);
+  }
+
+  /** Restore a backup: the whole paper, or { questionId } for one question. */
+  @Post(':id/versions/:vid/restore')
+  @HttpCode(200)
+  restoreVersion(@Param('id') id: string, @Param('vid', ParseIntPipe) vid: number, @Body() body: unknown) {
+    return this.papers.restoreVersion(id, vid, body);
+  }
+
+  /** Problems an AI reading typically leaves (errors block publishing). */
+  @Get(':id/checks')
+  checks(@Param('id') id: string) {
+    return this.papers.checks(id);
+  }
+
+  /** The latest AI re-read (safe re-process) next to the live paper, part by part; null when there is none. */
+  @Get(':id/draft')
+  draft(@Param('id') id: string) {
+    return this.papers.draft(id);
+  }
+
+  /** Take parts from the AI draft: { take: ["13(b)(i)", …] } (normalised part numbers). */
+  @Post(':id/draft/:did/apply')
+  @HttpCode(200)
+  applyDraft(@Param('id') id: string, @Param('did', ParseIntPipe) did: number, @Body() body: unknown) {
+    return this.papers.applyDraft(id, did, body);
+  }
+
+  @Delete(':id/draft/:did')
+  discardDraft(@Param('id') id: string, @Param('did', ParseIntPipe) did: number) {
+    return this.papers.discardDraft(id, did);
+  }
+
+  /** Rough AI cost of re-reading this paper with the AI chosen in Settings. */
+  @Get(':id/reprocess-estimate')
+  reprocessEstimate(@Param('id') id: string) {
+    return this.papers.reprocessEstimate(id);
+  }
+
+  @Post(':id/questions/:qid/merge-next')
+  @HttpCode(200)
+  mergeNext(@Param('id') id: string, @Param('qid', ParseIntPipe) qid: number) {
+    return this.papers.mergeNext(id, qid);
+  }
+
+  /** { at: paragraph index, number: "14(b)", firstPages: [14], secondPages: [18], secondMarks? } */
+  @Post(':id/questions/:qid/split')
+  split(@Param('id') id: string, @Param('qid', ParseIntPipe) qid: number, @Body() body: unknown) {
+    return this.papers.split(id, qid, body);
+  }
+
+  /** { direction: 'up' | 'down' } */
+  @Post(':id/questions/:qid/move')
+  @HttpCode(200)
+  move(@Param('id') id: string, @Param('qid', ParseIntPipe) qid: number, @Body() body: unknown) {
+    return this.papers.move(id, qid, body);
+  }
+
+  /** Add an empty part right after this one: { number: "14(b)", pages: [18] } (to split a part the AI merged). */
+  @Post(':id/questions/:qid/add-part')
+  addPart(@Param('id') id: string, @Param('qid', ParseIntPipe) qid: number, @Body() body: unknown) {
+    return this.papers.addPart(id, qid, body);
+  }
+
   @Post(':id/questions/:qid/regenerate')
-  regenerate(@Param('id') id: string, @Param('qid', ParseIntPipe) qid: number) {
-    return this.papers.regenerate(id, qid);
+  regenerate(@Param('id') id: string, @Param('qid', ParseIntPipe) qid: number, @Body() body: unknown) {
+    return this.papers.regenerate(id, qid, body);
   }
 }
 

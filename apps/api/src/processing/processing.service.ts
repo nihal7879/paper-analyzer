@@ -28,7 +28,12 @@ export class ProcessingService {
   }
 
   /** Render, read with AI, crop, match answers, save to the database. Progress goes to processing_jobs. */
-  async process(paperId: string, jobId: number): Promise<void> {
+  /**
+   * Read a paper with AI. draft = a re-process of a paper that already has questions: the new reading is saved as a
+   * DRAFT to compare and accept part by part; the live paper (and its published state) is not touched.
+   */
+  async process(paperId: string, jobId: number, opts: { draft?: boolean } = {}): Promise<void> {
+    const draftDir = opts.draft ? `versions/${paperId}/draft-${Date.now().toString(36)}` : null;
     const keys = paperKeys(paperId);
     const meta = await this.repo.getMeta(paperId);
     if (!meta) throw new Error(`Paper ${paperId} not found`);
@@ -139,7 +144,7 @@ export class ProcessingService {
         for (const { page, box: rawBox } of q.diagramsByPage) {
           const box = normaliseBox(rawBox);
           if (!box) continue;
-          const path = keys.questionImage(id, images.length + 1);
+          const path = draftDir ? `${draftDir}/${id}-img${images.length + 1}.webp` : keys.questionImage(id, images.length + 1);
           await this.storage.write(path, await cropToWebp(qpPages[page - 1], box));
           images.push({ path, page, box });
         }
@@ -164,6 +169,18 @@ export class ProcessingService {
         });
       }
 
+      if (opts.draft) {
+        // safe re-process: keep the reading as a draft; the admin compares it with the live paper and takes what is better
+        await this.repo.saveDraft(paperId, `AI re-read (${this.ai.name} · ${this.ai.model})`, questions);
+        await status({
+          state: 'DONE',
+          progress: 100,
+          questionsFound: questions.length,
+          failedPages: { qp: failedQpPages, ms: failedMsPages },
+          message: `AI draft ready: ${questions.length} parts. Compare it with the live paper and choose what to take (the live paper is unchanged).`,
+        });
+        return;
+      }
       await status({ message: 'Saving questions…', progress: 96 });
       await this.repo.saveExtraction(paperId, this.ai.name, this.ai.model, questions);
       // Worksheet crops (each question exactly as printed, for downloaded worksheets). Not fatal: worksheets
@@ -191,7 +208,8 @@ export class ProcessingService {
       const message = (err as Error).message;
       this.logger.error(`Processing ${paperId} failed: ${message}`, (err as Error).stack);
       await status({ state: 'FAILED', error: message, message: 'Processing failed' });
-      await this.repo.setPaperState(paperId, 'FAILED').catch(() => undefined);
+      // a failed draft leaves the live paper as it was
+      if (!opts.draft) await this.repo.setPaperState(paperId, 'FAILED').catch(() => undefined);
     }
   }
 

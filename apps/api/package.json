@@ -26,6 +26,7 @@
     "db:import": "node db/import-storage.mjs"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.132.1",
     "@huggingface/transformers": "^4.3.0",
     "@nestjs/common": "^12.0.1",
     "@nestjs/config": "^12.0.1",

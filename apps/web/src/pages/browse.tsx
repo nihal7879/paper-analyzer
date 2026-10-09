@@ -4,6 +4,7 @@ import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } f
 import { Link, useLocation, useNavigationType, useSearchParams } from "react-router";
 import { ActiveChips } from "@/components/bank-filters";
 import { FilterPanel, FiltersButton, SearchToggle } from "@/components/filter-bar";
+import { AdminMenu } from "@/components/admin-menu";
 import { SettingsMenu } from "@/components/settings-menu";
 import { Logo, ThemeToggle } from "@/components/top-bar";
 import { warmMath } from "@/components/math-text";
@@ -254,11 +255,9 @@ export function BrowsePage() {
         <section className={cn("grid min-w-0 gap-4", selected.length > 0 && "pb-20")}>
           {/* Toolbar: count · 🔍 · Filters · Select all · Sort */}
           <div className="flex items-center gap-2">
-            {!isAdmin && (
-              <div className={cn("mr-1 sm:mr-2", logoName && "max-sm:mr-auto", (searchOpen || typedQ) && "max-sm:hidden")}>
-                <Logo compact onNameShown={setLogoName} />
-              </div>
-            )}
+            <div className={cn("mr-1 sm:mr-2", logoName && "max-sm:mr-auto", (searchOpen || typedQ) && "max-sm:hidden")}>
+              <Logo compact onNameShown={setLogoName} />
+            </div>
             <p className={cn("mr-auto shrink-0 text-sm text-muted-foreground", (searchOpen || typedQ || logoName) && "max-sm:hidden")}>
               {!list.isLoading && (
                 <>
@@ -301,13 +300,9 @@ export function BrowsePage() {
                 ))}
               </SelectContent>
             </Select>
-            {!isAdmin && (
-              <>
-                <SettingsMenu />
-                {/* phones: light / dark lives in Settings */}
-                <ThemeToggle className="max-sm:hidden" />
-              </>
-            )}
+            <SettingsMenu />
+            {/* admins: light / dark is in the Admin menu; students' phones: in Settings */}
+            {isAdmin ? <AdminMenu /> : <ThemeToggle className="max-sm:hidden" />}
           </div>
 
           <FilterPanel open={filtersOpen} onClose={closeFilters} filters={filters} onApply={applyFilters} />

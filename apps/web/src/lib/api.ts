@@ -71,6 +71,10 @@ export interface Question {
 
 /** Fields the editor sends; only what is present is changed. */
 export interface QuestionPatch {
+  /** part number as printed, e.g. "14(a)" */
+  number?: string;
+  /** question-paper pages the part is on */
+  pages?: number[];
   type?: Question["type"];
   marks?: number | null;
   text?: string;
@@ -216,7 +220,59 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   return res.json() as Promise<T>;
 }
 
+/** A backup of a paper (automatic before risky actions) or of one question. */
+export interface PaperVersion {
+  id: number;
+  kind: "SNAPSHOT" | "DRAFT";
+  questionId: number | null;
+  label: string;
+  parts: number;
+  applied: boolean;
+  createdAt: string;
+}
+/** A problem found in a paper's parts (errors block publishing). */
+export interface PaperIssue {
+  severity: "error" | "warning";
+  code: string;
+  questionId: string | null;
+  number: string | null;
+  message: string;
+}
+interface DraftSide {
+  number: string;
+  text: string;
+  marks: number | null;
+  type: string;
+  pages: number[];
+  answer: string;
+  options: number;
+}
+/** An AI re-read waiting to be compared with the live paper. */
+export interface PaperDraft {
+  id: number;
+  label: string;
+  createdAt: string;
+  rows: { key: string; current: (DraftSide & { id: string }) | null; draft: (DraftSide & { images: number }) | null; same: boolean }[];
+}
+
+export type AiProviderId = "claude" | "openai" | "gemini";
+export interface AiProviderUsage {
+  requests: number;
+  failures: number;
+  lastUsedAt: string | null;
+  lastError: string | null;
+}
+/** Admin AI settings: the AI in use, and each provider's key (masked), model and request counts. */
+export interface AiSettings {
+  active: AiProviderId | "mock";
+  inUse: { name: string; model: string };
+  providers: { id: AiProviderId; label: string; keySet: boolean; keyMasked: string | null; model: string; usage: AiProviderUsage }[];
+}
+
 export const api = {
+  aiSettings: () => request<AiSettings>("/settings/ai"),
+  updateAiSettings: (body: { provider?: AiProviderId | "mock"; keys?: Partial<Record<AiProviderId, string>>; models?: Partial<Record<AiProviderId, string>> }) =>
+    request<AiSettings>("/settings/ai", { method: "PUT", body: JSON.stringify(body) }),
   login: (password: string) => request<{ token: string }>("/auth/login", { method: "POST", body: JSON.stringify({ password }) }),
   catalog: () => request<Catalog>("/catalog"),
   parseFilename: (name: string) => request<{ parsed: ParsedFilename | null }>(`/catalog/parse-filename?name=${encodeURIComponent(name)}`),
@@ -228,13 +284,44 @@ export const api = {
     return request<DetectedDetails>("/papers/detect", { method: "POST", body: form });
   },
   upload: (form: FormData) => request<{ id: string }>("/papers", { method: "POST", body: form }),
-  reprocess: (id: string) => request<{ id: string }>(`/papers/${encodeURIComponent(id)}/reprocess`, { method: "POST" }),
+  reprocess: (id: string) => request<{ id: string; draft?: boolean }>(`/papers/${encodeURIComponent(id)}/reprocess`, { method: "POST" }),
   remove: (id: string) => request<void>(`/papers/${encodeURIComponent(id)}`, { method: "DELETE" }),
   publish: (id: string) => request<{ id: string }>(`/papers/${encodeURIComponent(id)}/publish`, { method: "POST" }),
   verifyAll: (id: string) => request<{ id: string; verified: number }>(`/papers/${encodeURIComponent(id)}/verify-all`, { method: "POST" }),
   unpublish: (id: string) => request<{ id: string }>(`/papers/${encodeURIComponent(id)}/unpublish`, { method: "POST" }),
   updateQuestion: (paperId: string, questionId: string, patch: QuestionPatch) =>
     request<Question>(`/papers/${encodeURIComponent(paperId)}/questions/${questionId}`, { method: "PATCH", body: JSON.stringify(patch) }),
+  /** Save a part's hand-drawn worksheet crop (question paper or mark scheme). */
+  /** Add an empty part right after another one (split a part the AI merged). */
+  // ---- safety tools: backups, checks, AI draft, part tools, cost estimate
+  versions: (paperId: string) => request<PaperVersion[]>(`/papers/${encodeURIComponent(paperId)}/versions`),
+  versionParts: (paperId: string, versionId: number) => request<{ id: number; number: string; deleted: boolean }[]>(`/papers/${encodeURIComponent(paperId)}/versions/${versionId}/parts`),
+  backupNow: (paperId: string, label?: string) => request<{ id: number | null }>(`/papers/${encodeURIComponent(paperId)}/versions`, { method: "POST", body: JSON.stringify({ label }) }),
+  restoreVersion: (paperId: string, versionId: number, questionId?: number) =>
+    request<{ restored: number }>(`/papers/${encodeURIComponent(paperId)}/versions/${versionId}/restore`, { method: "POST", body: JSON.stringify(questionId ? { questionId } : {}) }),
+  checks: (paperId: string) => request<PaperIssue[]>(`/papers/${encodeURIComponent(paperId)}/checks`),
+  draft: (paperId: string) => request<PaperDraft | null>(`/papers/${encodeURIComponent(paperId)}/draft`),
+  applyDraft: (paperId: string, draftId: number, take: string[]) =>
+    request<{ taken: number }>(`/papers/${encodeURIComponent(paperId)}/draft/${draftId}/apply`, { method: "POST", body: JSON.stringify({ take }) }),
+  discardDraft: (paperId: string, draftId: number) => request<{ discarded: boolean }>(`/papers/${encodeURIComponent(paperId)}/draft/${draftId}`, { method: "DELETE" }),
+  reprocessEstimate: (paperId: string) =>
+    request<{ provider: string; model: string; pages: number; usdLow: number; usdHigh: number }>(`/papers/${encodeURIComponent(paperId)}/reprocess-estimate`),
+  mergeNext: (paperId: string, questionId: string) => request<Question>(`/papers/${encodeURIComponent(paperId)}/questions/${questionId}/merge-next`, { method: "POST" }),
+  splitPart: (paperId: string, questionId: string, body: { at: number; number: string; firstPages: number[]; secondPages: number[]; secondMarks: number | null }) =>
+    request<Question>(`/papers/${encodeURIComponent(paperId)}/questions/${questionId}/split`, { method: "POST", body: JSON.stringify(body) }),
+  movePart: (paperId: string, questionId: string, direction: "up" | "down") =>
+    request<{ moved: boolean }>(`/papers/${encodeURIComponent(paperId)}/questions/${questionId}/move`, { method: "POST", body: JSON.stringify({ direction }) }),
+  testAiKey: (provider: AiProviderId) => request<{ ok: boolean; message: string }>("/settings/ai/test", { method: "POST", body: JSON.stringify({ provider }) }),
+  addPart: (paperId: string, afterQuestionId: string, body: { number: string; pages: number[] }) =>
+    request<Question>(`/papers/${encodeURIComponent(paperId)}/questions/${afterQuestionId}/add-part`, { method: "POST", body: JSON.stringify(body) }),
+  /** Read one question again with AI (its page + mark-scheme page), guided by a note; returns new fields, saves nothing. */
+  regenerateQuestion: (paperId: string, questionId: string, hint: string) =>
+    request<Omit<QuestionPatch, "verify">>(`/papers/${encodeURIComponent(paperId)}/questions/${questionId}/regenerate`, { method: "POST", body: JSON.stringify({ hint }) }),
+  setCrops: (paperId: string, questionId: string, body: { source: "QP" | "MS"; regions: { page: number; box: { x0: number; y0: number; x1: number; y1: number } }[] }) =>
+    request<Question>(`/papers/${encodeURIComponent(paperId)}/questions/${questionId}/crops`, { method: "PUT", body: JSON.stringify(body) }),
+  /** Re-cut a paper's worksheet crops (question paper + mark scheme) from the original PDFs. */
+  rebuildCrops: (paperId: string) =>
+    request<{ parts: number; qp: number; ms: number; notFound: string[] }>(`/papers/${encodeURIComponent(paperId)}/crops`, { method: "POST" }),
   verifyQuestion: (paperId: string, questionId: string, verified: boolean) =>
     request<Question>(`/papers/${encodeURIComponent(paperId)}/questions/${questionId}/verify`, { method: "POST", body: JSON.stringify({ verified }) }),
   deleteQuestion: (paperId: string, questionId: string) =>

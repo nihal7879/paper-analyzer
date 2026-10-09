@@ -1,5 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { CheckCircle2, ChevronRight, FileStack, Globe, Loader2, Upload, XCircle } from "lucide-react";
+import { AdminPageBar } from "@/components/admin-menu";
 import { Link } from "react-router";
 import { RequireAdmin } from "@/components/require-admin";
 import { Badge } from "@/components/ui/badge";
@@ -33,15 +34,13 @@ function PapersList() {
 
   return (
     <div className="grid gap-6">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-        <div className="grid gap-1">
-          <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">Papers</h1>
-          <p className="text-muted-foreground">Review what the AI extracted, fix mistakes, then publish for students.</p>
-        </div>
-        <Button size="lg" className="gap-1.5" nativeButton={false} render={<Link viewTransition to="/admin/upload" />}>
+      {/* kept for screen readers; the page starts straight with the stats */}
+      <h1 className="sr-only">Papers</h1>
+      <AdminPageBar>
+        <Button className="ml-auto h-10 gap-1.5 sm:h-9" nativeButton={false} render={<Link viewTransition to="/admin/upload" />}>
           <Upload className="size-4" /> Upload paper
         </Button>
-      </div>
+      </AdminPageBar>
 
       {list.length > 0 && (
         <div className="grid grid-cols-3 gap-3">

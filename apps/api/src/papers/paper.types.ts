@@ -119,6 +119,10 @@ export interface ExtractedQuestion {
 
 /** Fields an admin can change in the editor. */
 export interface QuestionEdit {
+  /** Part number as printed, e.g. "14(a)" (fixes a part the AI read without its question number). */
+  number?: string;
+  /** Question-paper pages the part is on (first page = where it starts). */
+  pages?: number[];
   type?: QuestionType;
   marks?: number | null;
   text?: string;

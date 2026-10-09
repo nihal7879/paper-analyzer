@@ -1,4 +1,4 @@
-import { BookOpenCheck, FileStack, LibraryBig, LogOut, Moon, ShieldCheck, Sun, Upload } from "lucide-react";
+import { BookOpenCheck, FileStack, LibraryBig, LogOut, Moon, Settings2, ShieldCheck, Sun, Upload } from "lucide-react";
 import { useState } from "react";
 import { Link, NavLink, useLocation, useNavigate } from "react-router";
 import { SettingsMenu } from "@/components/settings-menu";
@@ -87,6 +87,11 @@ export function TopBar() {
             {isAdmin && (
               <NavItem to="/admin/papers" icon={<FileStack className="size-4" />}>
                 Papers
+              </NavItem>
+            )}
+            {isAdmin && (
+              <NavItem to="/admin/settings" icon={<Settings2 className="size-4" />}>
+                Settings
               </NavItem>
             )}
           </nav>

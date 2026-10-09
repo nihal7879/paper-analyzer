@@ -269,13 +269,179 @@ export class PapersRepository {
     return map;
   }
 
-  /** Start a new processing job for a paper; returns the job id. */
-  async createJob(slug: string): Promise<number> {
+  /**
+   * Start a new processing job for a paper; returns the job id. `keepStatus` (a re-process into a draft) leaves the
+   * paper as it is — e.g. still published for students — instead of marking it PROCESSING.
+   */
+  async createJob(slug: string, keepStatus = false): Promise<number> {
     const paper = await this.db('papers').where({ slug }).first('id');
     if (!paper) throw new Error(`Paper ${slug} not found`);
     const [id] = await this.db('processing_jobs').insert({ paper_id: paper.id, state: 'QUEUED', message: 'Waiting to start…' });
-    await this.db('papers').where({ id: paper.id }).update({ status: 'PROCESSING' });
+    if (!keepStatus) await this.db('papers').where({ id: paper.id }).update({ status: 'PROCESSING' });
     return id;
+  }
+
+  // ------------------------------------------------------------------ AI drafts (safe re-process)
+
+  /** Store a fresh AI reading as a draft to compare with the live paper (nothing live changes). */
+  async saveDraft(slug: string, label: string, questions: ExtractedQuestion[]): Promise<number> {
+    const [id] = await this.db('paper_versions').insert({ slug, kind: 'DRAFT', label: label.slice(0, 200), data: JSON.stringify({ questions }), parts: questions.length });
+    return id;
+  }
+
+  async latestDraft(slug: string): Promise<{ id: number; label: string; createdAt: Date; questions: ExtractedQuestion[] } | null> {
+    const row = await this.db('paper_versions').where({ slug, kind: 'DRAFT', applied: false }).orderBy('id', 'desc').first('id', 'label', 'created_at', 'data');
+    return row ? { id: row.id, label: row.label, createdAt: row.created_at, questions: JSON.parse(row.data).questions } : null;
+  }
+
+  async closeDraft(slug: string, draftId: number, applied: boolean): Promise<void> {
+    if (applied) await this.db('paper_versions').where({ id: draftId, slug }).update({ applied: true });
+    else await this.db('paper_versions').where({ id: draftId, slug, kind: 'DRAFT' }).delete();
+  }
+
+  /** Take one part from an AI draft: replace an existing part's content, or add it as a new part. */
+  async applyDraftPart(slug: string, questionId: number | null, q: ExtractedQuestion): Promise<number> {
+    return this.db.transaction(async (trx) => {
+      const paper = await trx('papers').where({ slug }).first('id', 'subject_id');
+      if (!paper) throw new Error(`Paper ${slug} not found`);
+      const topicId = await this.topicId(trx, paper.subject_id, q.topicCode, q.topic, new Map());
+      const fields = {
+        number: q.number.slice(0, 30),
+        type: q.type,
+        marks: q.marks,
+        text: q.text,
+        options: q.options.length ? JSON.stringify(q.options) : null,
+        topic_id: topicId,
+        subtopic_id: await this.subtopicId(trx, topicId, q.subtopic ?? ''),
+        subtopic_label: q.subtopic?.slice(0, 200) || null,
+        difficulty: q.difficulty,
+        page: q.page,
+        pages: JSON.stringify(q.pages),
+        confidence: q.confidence,
+        edited_at: trx.fn.now(),
+      };
+      let id = questionId;
+      if (id) {
+        await trx('questions').where({ id }).update(fields);
+        await trx('answers').where({ question_id: id }).delete();
+        await trx('question_keywords').where({ question_id: id }).delete();
+        await trx('question_images').where({ question_id: id, kind: 'QUESTION' }).delete();
+      } else {
+        const max = await trx('questions').where({ paper_id: paper.id }).max({ m: 'sort_order' }).first();
+        [id] = await trx('questions').insert({ ...fields, paper_id: paper.id, subject_id: paper.subject_id, sort_order: Number(max?.m ?? 0) + 1, status: 'DRAFT' });
+      }
+      await this.writeChildren(trx, id!, q.answer, q.images, q.keywords);
+      return id!;
+    });
+  }
+
+  // ------------------------------------------------------------------ part tools (merge / split / move)
+
+  /** Put a paper's parts in paper order: 1, 2, 3(a), 3(b)(i)… (parts without a number keep their place at the end). */
+  async renumberInPaperOrder(paperId: number): Promise<void> {
+    const rows: { id: number; number: string; sort_order: number }[] = await this.db('questions').where({ paper_id: paperId }).select('id', 'number', 'sort_order');
+    const ROMAN = ['i', 'ii', 'iii', 'iv', 'v', 'vi', 'vii', 'viii', 'ix', 'x'];
+    const key = (n: string) => {
+      const m = /^(\d{1,3})(?:\(([a-z])\))?(?:\(([ivx]+)\))?/i.exec(n.replace(/\s+/g, ''));
+      return m ? [Number(m[1]), m[2] ? m[2].toLowerCase().charCodeAt(0) - 96 : 0, m[3] ? ROMAN.indexOf(m[3].toLowerCase()) + 1 : 0] : [9999, 0, 0];
+    };
+    rows.sort((a, b) => {
+      const ka = key(a.number);
+      const kb = key(b.number);
+      return ka[0] - kb[0] || ka[1] - kb[1] || ka[2] - kb[2] || a.sort_order - b.sort_order;
+    });
+    await this.db.transaction(async (trx) => {
+      for (const [i, r] of rows.entries()) if (r.sort_order !== i) await trx('questions').where({ id: r.id }).update({ sort_order: i });
+    });
+  }
+
+  /** The next part after this one in the paper (by sort order), not deleted. */
+  async neighbour(questionId: number, direction: 'up' | 'down') {
+    const q = await this.db('questions').where({ id: questionId }).first('paper_id', 'sort_order');
+    if (!q) return null;
+    return this.db('questions')
+      .where({ paper_id: q.paper_id })
+      .whereNull('deleted_at')
+      .where('sort_order', direction === 'down' ? '>' : '<', q.sort_order)
+      .orderBy('sort_order', direction === 'down' ? 'asc' : 'desc')
+      .first('id', 'sort_order', 'number');
+  }
+
+  async swapOrder(a: number, b: number): Promise<void> {
+    await this.db.transaction(async (trx) => {
+      const [x, y] = await Promise.all([trx('questions').where({ id: a }).first('sort_order'), trx('questions').where({ id: b }).first('sort_order')]);
+      await trx('questions').where({ id: a }).update({ sort_order: y.sort_order });
+      await trx('questions').where({ id: b }).update({ sort_order: x.sort_order });
+    });
+  }
+
+  /** Merge the next part into this one: text joined, pages joined, marks added, answers joined, its images moved. */
+  async mergeInto(keepId: number, dropId: number): Promise<void> {
+    await this.db.transaction(async (trx) => {
+      const [a, b] = await Promise.all([trx('questions').where({ id: keepId }).first('*'), trx('questions').where({ id: dropId }).first('*')]);
+      const pagesOf = (q: { page: number; pages: unknown }) => {
+        const p = (typeof q.pages === 'string' ? JSON.parse(q.pages) : q.pages) as number[] | null;
+        return p?.length ? p : [q.page];
+      };
+      const pages = [...new Set([...pagesOf(a), ...pagesOf(b)])].sort((x, y) => x - y);
+      await trx('questions').where({ id: keepId }).update({
+        text: `${a.text}\n\n${b.text}`.trim(),
+        marks: a.marks == null && b.marks == null ? null : (a.marks ?? 0) + (b.marks ?? 0),
+        page: pages[0],
+        pages: JSON.stringify(pages),
+        edited_at: trx.fn.now(),
+      });
+      const [ansA, ansB] = await Promise.all([trx('answers').where({ question_id: keepId }).first('*'), trx('answers').where({ question_id: dropId }).first('*')]);
+      if (ansB) {
+        if (ansA) await trx('answers').where({ question_id: keepId }).update({ text: `${ansA.text ?? ''}\n\n${ansB.text ?? ''}`.trim(), correct_option: ansA.correct_option ?? ansB.correct_option });
+        else await trx('answers').insert({ question_id: keepId, correct_option: ansB.correct_option, text: ansB.text, source: ansB.source });
+      }
+      const n = await trx('question_images').where({ question_id: keepId, kind: 'QUESTION' }).count({ c: '*' }).first();
+      const imgs = await trx('question_images').where({ question_id: dropId, kind: 'QUESTION' }).orderBy('sort_order');
+      for (const [k, img] of imgs.entries()) await trx('question_images').where({ id: img.id }).update({ question_id: keepId, sort_order: Number(n?.c ?? 0) + k });
+      const kws = await trx('question_keywords').where({ question_id: dropId }).pluck('keyword');
+      for (const kw of kws) await trx.raw('INSERT IGNORE INTO question_keywords (question_id, keyword) VALUES (?, ?)', [keepId, kw]);
+      await trx('questions').where({ id: dropId }).update({ deleted_at: trx.fn.now() });
+    });
+  }
+
+  /** Split a part: text from paragraph `at` on becomes a new part right after it (with its own number and pages). */
+  async splitPart(questionId: number, at: number, newNumber: string, firstPages: number[], secondPages: number[], secondMarks: number | null): Promise<number> {
+    return this.db.transaction(async (trx) => {
+      const q = await trx('questions').where({ id: questionId }).first('*');
+      const paras = String(q.text).split(/\n{2,}/);
+      const first = paras.slice(0, at).join('\n\n').trim();
+      const second = paras.slice(at).join('\n\n').trim();
+      await trx('questions').where({ id: questionId }).update({
+        text: first,
+        marks: secondMarks != null && q.marks != null ? Math.max(0, q.marks - secondMarks) : q.marks,
+        page: firstPages[0],
+        pages: JSON.stringify(firstPages),
+        edited_at: trx.fn.now(),
+      });
+      await trx('questions').where({ paper_id: q.paper_id }).where('sort_order', '>', q.sort_order).increment('sort_order', 1);
+      const [id] = await trx('questions').insert({
+        paper_id: q.paper_id,
+        subject_id: q.subject_id,
+        number: newNumber,
+        sort_order: q.sort_order + 1,
+        type: q.type === 'MCQ' ? 'STRUCTURED' : q.type,
+        marks: secondMarks,
+        text: second,
+        topic_id: q.topic_id,
+        subtopic_id: q.subtopic_id,
+        subtopic_label: q.subtopic_label,
+        difficulty: q.difficulty,
+        page: secondPages[0],
+        pages: JSON.stringify(secondPages),
+        confidence: q.confidence,
+        status: 'DRAFT',
+        edited_at: trx.fn.now(),
+      });
+      // diagrams on the second part's pages move with it
+      await trx('question_images').where({ question_id: questionId, kind: 'QUESTION' }).whereIn('page', secondPages.filter((p) => !firstPages.includes(p))).update({ question_id: id });
+      return id;
+    });
   }
 
   async updateJob(jobId: number, s: Partial<PaperStatus>): Promise<void> {
@@ -386,6 +552,12 @@ export class PapersRepository {
   async updateQuestion(questionId: number, subjectId: number, edit: QuestionEdit, newImages: QuestionImage[] | null, verify: boolean): Promise<void> {
     await this.db.transaction(async (trx) => {
       const row: Record<string, unknown> = {};
+      if (edit.number !== undefined) row.number = edit.number;
+      if (edit.pages !== undefined) {
+        const pages = [...new Set(edit.pages)].sort((a, b) => a - b);
+        row.page = pages[0];
+        row.pages = JSON.stringify(pages);
+      }
       if (edit.type !== undefined) row.type = edit.type;
       if (edit.marks !== undefined) row.marks = edit.marks;
       if (edit.text !== undefined) row.text = edit.text;
@@ -427,6 +599,36 @@ export class PapersRepository {
         const unique = [...new Set(edit.keywords.map((k) => k.trim().toLowerCase().slice(0, 80)).filter(Boolean))];
         if (unique.length) await trx('question_keywords').insert(unique.map((keyword) => ({ question_id: questionId, keyword })));
       }
+    });
+  }
+
+  /** A new, empty part placed right after another part of the same paper (admin splits a wrongly merged part). */
+  async addPart(afterId: number, number: string, pages: number[]): Promise<number> {
+    return this.db.transaction(async (trx) => {
+      const after = await trx('questions').where({ id: afterId }).first('paper_id', 'subject_id', 'sort_order', 'topic_id', 'subtopic_id', 'subtopic_label', 'difficulty');
+      if (!after) throw new Error('Question not found');
+      // make room right after it
+      await trx('questions').where({ paper_id: after.paper_id }).where('sort_order', '>', after.sort_order).increment('sort_order', 1);
+      const sorted = [...new Set(pages)].sort((a, b) => a - b);
+      const [id] = await trx('questions').insert({
+        paper_id: after.paper_id,
+        subject_id: after.subject_id,
+        number,
+        sort_order: after.sort_order + 1,
+        type: 'STRUCTURED',
+        marks: null,
+        text: '(New part. Use Regenerate with AI to read it from its page, or type the text.)',
+        topic_id: after.topic_id,
+        subtopic_id: after.subtopic_id,
+        subtopic_label: after.subtopic_label,
+        difficulty: after.difficulty,
+        page: sorted[0],
+        pages: JSON.stringify(sorted),
+        confidence: 1,
+        status: 'DRAFT',
+        edited_at: trx.fn.now(),
+      });
+      return id;
     });
   }
 
