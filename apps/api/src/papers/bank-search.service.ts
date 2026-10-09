@@ -247,9 +247,9 @@ export class BankSearchService implements OnModuleInit {
 
   // ------------------------------------------------------------------ results (whole questions)
 
-  async page(f: BankFilters, sort: BankSort, offset: number, limit: number) {
-    return this.cached(`page:${JSON.stringify([f, sort, offset, limit])}`, async () => {
-      const groups = this.base(f)
+  /** Matching whole questions (paper, number) in the order the list shows them. */
+  private orderedGroups(f: BankFilters, sort: BankSort) {
+    const groups = this.base(f)
         .clearSelect()
         .select('q.paper_id', 'q.base_number')
         .min({ ord: 'q.sort_order' })
@@ -260,6 +260,12 @@ export class BankSearchService implements OnModuleInit {
       if (sort === 'oldest') groups.orderBy([{ column: 'yr', order: 'asc' }, { column: 'se', order: 'asc' }, { column: 'pc', order: 'desc' }, { column: 'ord', order: 'asc' }]);
       if (sort === 'topic')
         groups.orderBy([{ column: 'ts', order: 'asc' }, { column: 'sts', order: 'asc' }, { column: 'yr', order: 'desc' }, { column: 'se', order: 'desc' }, { column: 'pc', order: 'asc' }, { column: 'ord', order: 'asc' }]);
+    return groups;
+  }
+
+  async page(f: BankFilters, sort: BankSort, offset: number, limit: number) {
+    return this.cached(`page:${JSON.stringify([f, sort, offset, limit])}`, async () => {
+      const groups = this.orderedGroups(f, sort);
       const [counts, pageRows, everything] = await Promise.all([
         this.db.from(this.base(f).clearSelect().select('q.paper_id').groupBy('q.paper_id', 'q.base_number').as('g')).select(this.db.raw('COUNT(*) as total, COUNT(DISTINCT g.paper_id) as papers')).first(),
         groups.clone().limit(limit).offset(offset),
@@ -410,17 +416,18 @@ export class BankSearchService implements OnModuleInit {
 
   // ------------------------------------------------------------------ select all, entries
 
-  /** Every part id of every matching whole question (Select all), capped. */
-  async ids(f: BankFilters) {
-    return this.cached(`ids:${JSON.stringify(f)}`, async () => {
-      const groups = this.base(f).clearSelect().distinct('q.paper_id', 'q.base_number');
-      const rows: { id: number }[] = await this.db('questions as q2')
-        .whereIn(['q2.paper_id', 'q2.base_number'], groups)
-        .whereNull('q2.deleted_at')
-        .where('q2.status', 'PUBLISHED')
-        .orderBy(['q2.paper_id', 'q2.sort_order'])
-        .limit(IDS_MAX + 1)
-        .select('q2.id');
+  /**
+   * Select all: the id of every part that matches the filters (only those parts, e.g. 15(b) but not 15(a) when only
+   * (b) matches), capped — in the same order as the list on screen (so the PDF follows what the teacher saw).
+   */
+  async ids(f: BankFilters, sort: BankSort = 'newest') {
+    return this.cached(`ids:${JSON.stringify([f, sort])}`, async () => {
+      const order: { paper_id: number; base_number: string }[] = await this.orderedGroups(f, sort);
+      const rank = new Map(order.map((g, i) => [`${g.paper_id}|${g.base_number}`, i]));
+      const rows: { id: number; paper_id: number; base_number: string; sort_order: number }[] = await this.base(f)
+        .clearSelect()
+        .distinct('q.id', 'q.paper_id', 'q.base_number', 'q.sort_order');
+      rows.sort((a, b) => (rank.get(`${a.paper_id}|${a.base_number}`) ?? 1e9) - (rank.get(`${b.paper_id}|${b.base_number}`) ?? 1e9) || a.sort_order - b.sort_order);
       return { ids: rows.slice(0, IDS_MAX).map((r) => String(r.id)), capped: rows.length > IDS_MAX };
     });
   }

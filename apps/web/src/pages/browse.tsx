@@ -96,7 +96,7 @@ export function BrowsePage() {
     if (texts.length) return warmMath(texts);
   }, [groups]);
   // Every part id of the matching questions (Select all) — a light list of ids from the server.
-  const idsQuery = useQuery({ queryKey: ["bank-ids", filtersToParams(filters, "newest").toString()], queryFn: () => fetchIds(filters), enabled: total > 0, staleTime: 60_000 });
+  const idsQuery = useQuery({ queryKey: ["bank-ids", filtersToParams(filters, sort).toString()], queryFn: () => fetchIds(filters, sort), enabled: total > 0, staleTime: 60_000 });
   const selectedEntries = useEntries(selected);
 
   // Back from another page (e.g. Similar questions): put the same card back at the same spot.
@@ -189,7 +189,7 @@ export function BrowsePage() {
   // dropped again when the filter changes. Hand-picked questions stay selected across filters.
   const bulkPicked = useRef<string[]>([]);
   const selectAll = async () => {
-    const ids = idsQuery.data?.ids ?? (await fetchIds(filters)).ids;
+    const ids = idsQuery.data?.ids ?? (await fetchIds(filters, sort)).ids;
     if (allResultsSelected) {
       selection.removeMany(ids);
       bulkPicked.current = [];

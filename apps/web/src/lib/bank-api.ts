@@ -117,7 +117,8 @@ export function useBankFacets(filters: Filters, enabled = true) {
 }
 
 /** Every part id of the matching questions (for Select all); only asked for when needed. */
-export const fetchIds = (filters: Filters) => api.bankGet<{ ids: string[]; capped: boolean }>("ids", paramsOf(filters));
+/** Every part id of the matching questions, in the list's order (Select all). */
+export const fetchIds = (filters: Filters, sort: SortKey = "newest") => api.bankGet<{ ids: string[]; capped: boolean }>("ids", paramsOf(filters, sort));
 
 /** Published questions by id, in the order given (PDF selection, Similar page, print). */
 export function useEntries(ids: string[]) {

@@ -151,7 +151,8 @@ export class BankController {
   /** Every part id of the matching questions (Select all). */
   @Get('ids')
   ids(@Query() q: Record<string, unknown>) {
-    return this.bankSearch.ids(this.bankSearch.parse(q).f);
+    const p = this.bankSearch.parse(q);
+    return this.bankSearch.ids(p.f, p.sort);
   }
 
   /** Published questions by id (?ids=1,2,3) or a whole paper (?paper=slug). */

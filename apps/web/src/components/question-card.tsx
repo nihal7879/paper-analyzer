@@ -67,6 +67,8 @@ export const QuestionCard = memo(function QuestionCard({
   const hardest = all.reduce((h, p) => (DIFF_RANK[p.difficulty] > DIFF_RANK[h.difficulty] ? p : h), all[0]).difficulty;
   const subtopics = [...new Set(all.map((p) => p.subtopic).filter(Boolean))];
   const partial = grouped && !!matched && matched.size > 0 && matched.size < all.length;
+  // With filters on, "Add to PDF" takes only the parts that match them (a, b or c); otherwise the whole question.
+  const pickIds = useMemo(() => (partial ? all.filter((p) => matched!.has(p.id)).map((p) => p.id) : ids), [partial, all, matched, ids]);
 
   return (
     <Card className={cn("gap-0 overflow-hidden rounded-[14px] border border-foreground/12 p-0 ring-0", showConfidence && lowConfidence && "ring-2 ring-amber-400/60", className)}>
@@ -80,7 +82,7 @@ export const QuestionCard = memo(function QuestionCard({
               <PaperDownloadMenu meta={meta}>
                 <Download className="size-3.5" /> Paper
               </PaperDownloadMenu>
-              <SelectButton ids={ids} />
+              <SelectButton ids={pickIds} />
             </>
           )}
         </div>

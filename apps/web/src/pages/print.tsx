@@ -30,7 +30,8 @@ export function PrintPage() {
   const loading = paper.isLoading || picked.isLoading;
   const items = useMemo<BankEntry[]>(() => (paperId ? [...paper.entries].sort((a, b) => a.order - b.order) : picked.entries), [paperId, paper.entries, picked.entries]);
 
-  const title = params.get("title") || (paperId && items[0] ? sourceLine(items[0].meta) : "Practice questions");
+  // worksheets: only the teacher's own title (none if they left it empty)
+  const title = params.get("title") || (paperId && items[0] ? sourceLine(items[0].meta) : "");
   const marks = items.reduce((s, e) => s + (e.question.marks ?? 0), 0);
   const single = paperId != null;
   const paperStyle = !single && params.get("style") === "paper";
@@ -77,7 +78,7 @@ export function PrintPage() {
   if (items.length === 0) return <p className="p-10 text-sm">No published questions found for this PDF.</p>;
 
   // Selected questions: a worksheet in the paper's layout. Past-paper style = the original crops; Normal = our text.
-  if (!single) return <Worksheet items={items} title={title} answers={answers === "inline" ? "end" : answers} typed={!paperStyle} />;
+  if (!single) return <Worksheet items={items} title={title} answers={answers === "inline" ? "end" : answers} typed={!paperStyle} part={params.get("part")} />;
 
   return (
     <div className="print-doc mx-auto max-w-[780px] bg-white px-8 py-8 text-[13px] leading-relaxed text-black">

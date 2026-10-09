@@ -81,11 +81,15 @@ export class PdfService implements OnModuleDestroy {
     // Answers at the end of a worksheet: the answer pages are made as their own document (like the real mark
     // scheme: no page border or "do not write" strip; landscape in the past-paper style) and joined after the
     // questions. (The border and strip repeat on every page of one document, so they can't skip the answers.)
-    if (worksheet && (answers === 'end' || answers === 'inline')) {
-      const questions = await this.print(q, params, 'none', { worksheet, paperStyle });
-      const answerPages = await this.print(q, params, 'only', { worksheet, paperStyle });
+    // The front cover is its own page too, without the border/strip, like the real paper's cover.
+    if (worksheet && answers !== 'only') {
+      const pieces = [
+        await this.print(q, params, 'none', { worksheet, paperStyle, part: 'cover' }),
+        await this.print(q, params, 'none', { worksheet, paperStyle, part: 'questions' }),
+      ];
+      if (answers === 'end' || answers === 'inline') pieces.push(await this.print(q, params, 'only', { worksheet, paperStyle }));
       const out = await PDFDocument.create();
-      for (const buf of [questions, answerPages]) {
+      for (const buf of pieces) {
         const doc = await PDFDocument.load(buf);
         for (const p of await out.copyPages(doc, doc.getPageIndices())) out.addPage(p);
       }
@@ -95,11 +99,14 @@ export class PdfService implements OnModuleDestroy {
   }
 
   /** One pass of Chrome over the /print page. */
-  private async print(q: PdfQuery, base: URLSearchParams, answers: string, o: { worksheet: boolean; paperStyle: boolean }): Promise<Buffer> {
+  private async print(q: PdfQuery, base: URLSearchParams, answers: string, o: { worksheet: boolean; paperStyle: boolean; part?: 'cover' | 'questions' }): Promise<Buffer> {
     const params = new URLSearchParams(base);
     params.set('answers', answers);
     // answers on their own: the mark scheme's look (no border/strip); landscape in the past-paper style
+    if (o.part) params.set('part', o.part);
     const answersOnly = o.worksheet && answers === 'only';
+    // pages without the border/strip: the cover and the answers (plain margins)
+    const plain = answersOnly || o.part === 'cover';
     // answer pages stay portrait, the same page size as the questions (mark-scheme crops are scaled to fit)
     const landscape = false;
     const browser = await this.getBrowser();
@@ -107,8 +114,8 @@ export class PdfService implements OnModuleDestroy {
     try {
       await page.goto(`${this.config.get('WEB_ORIGIN', { infer: true })}/print?${params}`, { waitUntil: 'networkidle0', timeout: 120_000 });
       await page.waitForFunction('window.__printReady === true', { timeout: 120_000 });
-      const footer = `<div style="width:100%;font-size:8px;color:#666;padding:0 14mm;display:flex;justify-content:space-between;font-family:sans-serif">
-        <span>${escapeHtml(q.title ?? '')}</span><span><span class="pageNumber"></span> / <span class="totalPages"></span></span></div>`;
+      // footer: just the page number (no title on every page), like the paper
+      const footer = `<div style="width:100%;font-size:8px;color:#666;padding:0 14mm;display:flex;justify-content:flex-end;font-family:sans-serif"><span><span class="pageNumber"></span> / <span class="totalPages"></span></span></div>`;
       const pdf = await page.pdf({
         format: 'A4',
         landscape,
@@ -116,10 +123,11 @@ export class PdfService implements OnModuleDestroy {
         // question pages draw the paper's border and right-hand hatched strip inside the page, so they need the room
         margin: landscape
           ? { top: '10mm', bottom: '12mm', left: '10mm', right: '10mm' }
-          : o.worksheet && !answersOnly
+          : o.worksheet && !plain
             ? { top: '7mm', bottom: '14mm', left: '10mm', right: '2mm' }
             : { top: '12mm', bottom: '16mm', left: '10mm', right: '10mm' },
-        displayHeaderFooter: true,
+        // the cover has no footer (like the paper's front page)
+        displayHeaderFooter: o.part !== 'cover',
         // a big worksheet (every question) takes Chrome well over the default 30 s
         timeout: 600_000,
         headerTemplate: '<span></span>',

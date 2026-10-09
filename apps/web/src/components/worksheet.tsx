@@ -66,7 +66,11 @@ export function toWholeQuestions(items: BankEntry[]): WholeQuestion[] {
   return [...map.values()];
 }
 
-export function Worksheet({ items, title, answers, typed = false }: { items: BankEntry[]; title: string; answers: Mode; typed?: boolean }) {
+/**
+ * part: the server prints a worksheet in pieces and joins them — "cover" (the front cover alone, without the page
+ * border/strip, like the real paper), "questions" (the question pages, no cover); none = everything (browser print).
+ */
+export function Worksheet({ items, title, answers, typed = false, part }: { items: BankEntry[]; title: string; answers: Mode; typed?: boolean; part?: string | null }) {
   const questions = toWholeQuestions(items);
   // answer pages are always portrait like the question pages (past-paper rows are scaled to the page width)
   const msLandscape = false;
@@ -74,10 +78,10 @@ export function Worksheet({ items, title, answers, typed = false }: { items: Ban
   const subjects = [...new Set(items.map((e) => `${e.meta.board} ${e.meta.curriculum.split(/\s+/).filter((w) => !e.meta.board.split(/\s+/).includes(w)).join(" ")} ${e.meta.subjectName}`.replace(/\s+/g, " ").trim()))];
 
   return (
-    <div className={msLandscape ? "ws-doc ws-landscape" : answers === "only" ? "ws-doc ws-plain" : "ws-doc"}>
+    <div className={msLandscape ? "ws-doc ws-landscape" : answers === "only" || part === "cover" ? "ws-doc ws-plain" : "ws-doc"}>
       <style>{WORKSHEET_CSS}</style>
       {/* Answer pages look like the mark scheme: no page border or "do not write" strip */}
-      {answers === "only" ? (
+      {answers === "only" || part === "cover" ? (
         <style>{msLandscape ? LANDSCAPE_CSS : PLAIN_CSS}</style>
       ) : (
         <>
@@ -93,22 +97,22 @@ export function Worksheet({ items, title, answers, typed = false }: { items: Ban
         <tbody><tr><td>
       {answers === "only" ? (
         <>
-          <header className="ws-answers-head">
-            <h1>{title}: Answers</h1>
-            <p>{subjects.join(" · ")} · {questions.length} question{questions.length === 1 ? "" : "s"} · {total} marks</p>
-          </header>
+          {/* no heading: the answer pages start straight with the mark scheme, like the real one */}
           {typed ? <MarkScheme questions={questions} /> : <MarkSchemeCrops questions={questions} landscape={false} />}
         </>
       ) : (
         <>
-          <Cover title={title} subjects={subjects} questions={questions} total={total} />
+          {part !== "questions" && <Cover title={title} questions={questions} total={total} />}
+          {part !== "cover" && (
+          <>
           {questions.map((q, i) => (
             <QuestionBlock key={q.key} q={q} n={i + 1} typed={typed} />
           ))}
           <p className="ws-end">TOTAL FOR WORKSHEET = {total} MARKS</p>
+          </>
+          )}
           {answers === "end" && (
             <section className="ws-answers">
-              <h2>Answers</h2>
               {typed ? <MarkScheme questions={questions} /> : <MarkSchemeCrops questions={questions} landscape={false} />}
             </section>
           )}
@@ -139,46 +143,103 @@ function Strip() {
   return <img className="ws-strip" src={STRIP_SVG} alt="" aria-hidden />;
 }
 
-function Cover({ title, subjects, questions, total }: { title: string; subjects: string[]; questions: WholeQuestion[]; total: number }) {
-  const sources = [...new Set(questions.map((q) => sourceLine(q.meta)))];
+/**
+ * Cover page laid out like the paper's front cover: a grey rounded box with the student's details, the board and
+ * level, the title bar, the subject code tag, the subject box and "You must have / Total Marks", then Instructions,
+ * Information and Advice. (No board logo or barcode.)
+ */
+function Cover({ title, questions, total }: { title: string; questions: WholeQuestion[]; total: number }) {
+  const metas = questions.map((q) => q.meta);
+  const first = metas[0];
+  const uniq = <T,>(xs: T[]) => [...new Set(xs)];
+  const level = (m: PaperMeta) => m.curriculum.split(/\s+/).filter((w) => !m.board.split(/\s+/).includes(w)).join(" ");
+  const boards = uniq(metas.map((m) => `${m.board} ${level(m)}`.trim()));
+  const subjectNames = uniq(metas.map((m) => m.subjectName));
+  const codes = uniq(metas.map((m) => m.subjectCode).filter(Boolean));
+  const sources = uniq(questions.map((q) => sourceLine(q.meta)));
+  const papers = sources.length;
   return (
     <section className="ws-cover">
-      <p className="ws-brand">Practice worksheet</p>
-      <h1>{title}</h1>
-      <p className="ws-subject">{subjects.join(" · ")}</p>
-      <div className="ws-fields">
-        <div>
-          <span>Name</span>
+      <div className="cv-box">
+        <p className="cv-cap">Please fill in your details below before starting this worksheet</p>
+        <div className="cv-details">
+          <div className="cv-field cv-wide">Name</div>
+          <div className="cv-field">Class</div>
         </div>
-        <div>
-          <span>Class</span>
-        </div>
-        <div>
+        <div className="cv-date">
           <span>Date</span>
+          <div className="cv-datebox" />
+        </div>
+        <p className="cv-board">{boards.join(" / ")}</p>
+        {/* the teacher's title if they typed one; otherwise just "Practice worksheet" */}
+        <div className="cv-titlebar">{title || "Practice worksheet"}</div>
+        <div className="cv-refrow">
+          <span>
+            {questions.length} question{questions.length === 1 ? "" : "s"} · {total} mark{total === 1 ? "" : "s"}
+          </span>
+          {codes.length > 0 && (
+            <span className="cv-ref">
+              <span className="cv-ref-label">
+                Paper
+                <br />
+                reference
+              </span>
+              <span className="cv-ref-code">{codes.join(" / ")}</span>
+            </span>
+          )}
+        </div>
+        <div className="cv-subject">
+          <p className="cv-subject-name">{subjectNames.join(" / ")}</p>
+          <p className="cv-subject-level">{first ? level(first) : ""}</p>
+          <p className="cv-subject-paper">
+            Questions from {papers} past paper{papers === 1 ? "" : "s"}
+          </p>
+        </div>
+        <div className="cv-musthave">
+          <div className="cv-must">
+            <b>You must have:</b>
+            <br />
+            Scientific calculator and ruler
+          </div>
+          <div className="cv-total">Total Marks</div>
         </div>
       </div>
-      <div className="ws-facts">
-        <div>
-          <b>{questions.length}</b>
-          <span>question{questions.length === 1 ? "" : "s"}</span>
-        </div>
-        <div>
-          <b>{total}</b>
-          <span>total marks</span>
-        </div>
-      </div>
+
       <h3>Instructions</h3>
       <ul>
-        <li>Use black ink or ball-point pen.</li>
-        <li>Answer all questions in the spaces provided; there may be more space than you need.</li>
-        <li>Show your working in calculations and include units where appropriate.</li>
-        <li>The marks for each question are shown in brackets.</li>
+        <li>
+          Use <b>black</b> ink or ball-point pen.
+        </li>
+        <li>If pencil is used for diagrams/sketches/graphs it must be dark (HB or B).</li>
+        <li>
+          <b>Fill in the boxes</b> at the top of this page with your name, class and date.
+        </li>
+        <li>
+          Answer <b>all</b> questions.
+        </li>
+        <li>
+          Answer the questions in the spaces provided
+          <br />
+          <i>– there may be more space than you need.</i>
+        </li>
       </ul>
-      <h3>Questions taken from</h3>
-      <ul className="ws-sources">
-        {sources.map((s) => (
-          <li key={s}>{s}</li>
-        ))}
+      <h3>Information</h3>
+      <ul>
+        <li>
+          The total mark for this worksheet is {total}.
+        </li>
+        <li>
+          The marks for <b>each</b> question are shown in brackets
+          <br />
+          <i>– use this as a guide as to how much time to spend on each question.</i>
+        </li>
+      </ul>
+      <h3>Advice</h3>
+      <ul>
+        <li>Read each question carefully before you start to answer it.</li>
+        <li>Try to answer every question.</li>
+        <li>Check your answers if you have time at the end.</li>
+        <li>You are advised to show your working in calculations including units where appropriate.</li>
       </ul>
     </section>
   );
@@ -465,6 +526,8 @@ const PLAIN_CSS = `
   .ws-plain.ws-doc { width: 190mm; }
   .ws-plain .ws-pages { width: 190mm; }
   .ws-plain .ws-answers-head { margin: 0; }
+  /* the cover printed on its own: no page break after it (that left a blank page) */
+  .ws-plain .ws-cover { break-after: auto; }
   .ws-plain .ws-ms-q { margin-left: 0; margin-right: 0; }
 }
 `;
@@ -485,31 +548,43 @@ const WORKSHEET_CSS = `
 .ws-pages { border-collapse: collapse; width: 100%; }
 .ws-pages td { padding: 0; }
 .ws-doc { width: 190mm; margin: 0 auto; background: #fff; color: #000; font-family: "Times New Roman", Times, serif; font-size: 11pt; line-height: 1.35; }
-.ws-cover { break-after: page; padding: 6mm 4mm 0; }
-.ws-brand { font: 600 9pt Arial, sans-serif; letter-spacing: 0.12em; text-transform: uppercase; color: #555; margin: 0 0 3mm; }
-.ws-cover h1 { font: 700 24pt Arial, sans-serif; margin: 0 0 2mm; }
-.ws-subject { font: 12pt Arial, sans-serif; color: #333; margin: 0 0 8mm; }
-.ws-fields { display: grid; grid-template-columns: 2fr 1fr 1fr; gap: 4mm; margin-bottom: 8mm; }
-.ws-fields div { border: 1px solid #000; height: 14mm; padding: 1.5mm 2.5mm; }
-.ws-fields span { font: 600 8.5pt Arial, sans-serif; color: #333; }
-.ws-facts { display: flex; gap: 4mm; margin-bottom: 8mm; }
-.ws-facts div { border: 2px solid #000; padding: 3mm 6mm; text-align: center; }
-.ws-facts b { display: block; font: 700 20pt Arial, sans-serif; }
-.ws-facts span { font: 9pt Arial, sans-serif; }
-.ws-cover h3 { font: 700 11pt Arial, sans-serif; margin: 6mm 0 2mm; }
-.ws-cover ul { margin: 0; padding-left: 6mm; font-size: 11pt; }
-.ws-cover li { margin: 1.2mm 0; }
-.ws-sources { font-size: 10pt; color: #333; }
+/* Cover: the paper's front-cover layout — clean sans-serif, grey rounded boxes */
+.ws-cover { break-after: page; padding: 2mm 22mm 0 12mm; font-family: "Segoe UI", "Open Sans", Frutiger, Arial, sans-serif; color: #1a1a1a; font-size: 10.5pt; line-height: 1.35; }
+.cv-box { border: 0.6mm solid #6f6f6f; border-radius: 3.5mm; padding: 2.5mm 4mm 4mm; }
+.cv-cap { text-align: center; font-weight: 600; font-size: 8.5pt; margin: 0 0 1.5mm; }
+.cv-details { display: flex; border: 0.5mm solid #6f6f6f; border-radius: 2.5mm; height: 11mm; }
+.cv-field { flex: 1; padding: 0.8mm 2mm; font-size: 8.5pt; }
+.cv-field + .cv-field { border-left: 0.4mm solid #6f6f6f; }
+.cv-wide { flex: 2.2; }
+.cv-date { display: flex; align-items: center; gap: 3mm; margin: 2mm 0 0; font-size: 9pt; }
+.cv-datebox { width: 45mm; height: 7mm; border: 0.5mm solid #6f6f6f; border-radius: 1.5mm; }
+.cv-board { font-size: 16pt; font-weight: 700; margin: 4mm 0 1.5mm; }
+.cv-titlebar { border: 0.5mm solid #6f6f6f; border-radius: 2.5mm; padding: 1mm 2.5mm; font-size: 17pt; font-weight: 700; }
+.cv-refrow { display: flex; align-items: flex-end; justify-content: space-between; margin: 2.5mm 0 0; font-size: 10pt; }
+.cv-ref { display: flex; align-items: stretch; }
+.cv-ref-label { border: 0.4mm solid #6f6f6f; border-right: none; padding: 0.5mm 2mm; font-size: 9pt; font-weight: 700; line-height: 1.15; }
+.cv-ref-code { background: #555; color: #fff; padding: 1mm 4mm; font-size: 17pt; font-weight: 700; display: flex; align-items: center; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+.cv-subject { border: 0.5mm solid #6f6f6f; border-radius: 2.5mm; padding: 2mm 3mm 4mm; min-height: 24mm; }
+.cv-subject-name { font-size: 18pt; font-weight: 700; margin: 0; line-height: 1.2; }
+.cv-subject-level, .cv-subject-paper { font-size: 12pt; font-weight: 700; margin: 0.5mm 0 0; }
+.cv-musthave { display: flex; gap: 2mm; margin: 3mm 0 0; }
+.cv-must { flex: 1; border: 0.5mm solid #6f6f6f; border-radius: 2.5mm; padding: 1.5mm 2.5mm; font-size: 10pt; }
+.cv-total { width: 18mm; border: 0.5mm solid #6f6f6f; border-radius: 2.5mm; padding: 1mm 1.5mm; font-size: 8pt; text-align: center; }
+.ws-cover h3 { font-size: 12.5pt; font-weight: 600; margin: 5mm 0 1mm; }
+.ws-cover ul { list-style: none; margin: 0; padding: 0; }
+.ws-cover li { position: relative; padding-left: 5mm; margin: 0.4mm 0; }
+.ws-cover li::before { content: ""; position: absolute; left: 0.5mm; top: 1.6mm; width: 2.4mm; height: 2.4mm; border-radius: 50%; background: #1a1a1a; }
+.ws-cover i { font-style: italic; }
 .ws-q { margin-right: 5mm; margin-bottom: 4mm; }
 .ws-first { position: relative; break-inside: avoid; }
 .ws-keep { break-inside: avoid; }
 /* the rule under each question starts at the number column, inside the page border (like the paper) */
 .ws-q::after { content: ""; display: block; margin: 2mm 0 0 3mm; border-bottom: 1px solid #000; }
-.ws-num { position: absolute; top: 0.2mm; font: 700 12pt Arial, sans-serif; line-height: 1; }
+.ws-num { position: absolute; top: 0.2mm; font: 700 12pt "Times New Roman", Times, serif; line-height: 1; }
 .ws-crop { display: block; height: auto; break-inside: avoid; }
 .ws-total { break-before: avoid; text-align: right; font-weight: 700; margin: 1mm 0 0; font-size: 11pt; }
-.ws-source { text-align: right; font: 7.5pt Arial, sans-serif; color: #666; margin: 0.5mm 0 0; }
-.ws-end { padding-right: 5mm; text-align: right; font: 700 11pt Arial, sans-serif; margin: 6mm 0 0; }
+.ws-source { text-align: right; font: 8.5pt "Times New Roman", Times, serif; color: #666; margin: 0.5mm 0 0; }
+.ws-end { padding-right: 5mm; text-align: right; font: 700 11pt "Times New Roman", Times, serif; margin: 6mm 0 0; }
 /* Normal format, laid out like the paper (page x: number 15 mm, stem 21 mm, (a) text 26 mm, (i) text 31.5 mm) */
 .ws-t-part { position: relative; break-inside: avoid; font-size: 11pt; line-height: 1.3; margin-bottom: 3mm; }
 .ws-t-part p { margin: 0; }
@@ -543,8 +618,8 @@ const WORKSHEET_CSS = `
 .ws-msq-cell { position: relative; }
 .ws-msq-num { position: absolute; font-family: "Times New Roman", Times, serif; font-weight: 700; line-height: 1; white-space: nowrap; }
 .ws-answers { break-before: page; }
-.ws-answers h2, .ws-answers-head h1 { font: 700 16pt Arial, sans-serif; border-bottom: 2px solid #000; padding-bottom: 2mm; margin: 0 0 4mm; }
-.ws-answers-head p { font: 9.5pt Arial, sans-serif; color: #444; margin: -2mm 0 5mm; }
+.ws-answers h2, .ws-answers-head h1 { font: 700 16pt "Times New Roman", Times, serif; border-bottom: 2px solid #000; padding-bottom: 2mm; margin: 0 0 4mm; }
+.ws-answers-head p { font: 11pt "Times New Roman", Times, serif; color: #444; margin: -2mm 0 5mm; }
 .ws-muted { color: #777; }
 .ws-doc .math-text table { margin: 1.5mm auto; }
 /* print layout last, so it wins over the base rules above */

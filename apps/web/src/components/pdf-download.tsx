@@ -24,12 +24,12 @@ const ANSWER_OPTIONS: { value: AnswerChoice; label: React.ReactNode }[] = [
   { value: "separate", label: <><span className="lg:hidden">Separate</span><span className="hidden lg:inline">Separate answer sheet</span></>, activeClassName: PICKED },
 ];
 
-/** Normal = our typed layout; past-paper style = the original paper's crops, border and side strip. */
-type PdfStyle = "normal" | "paper";
-const STYLE_OPTIONS: { value: PdfStyle; label: React.ReactNode }[] = [
-  { value: "normal", label: "Normal", activeClassName: PICKED },
-  { value: "paper", label: <><span className="lg:hidden">Past paper</span><span className="hidden lg:inline">Past-paper style</span></>, activeClassName: PICKED },
-];
+/**
+ * Every download is in the past-paper style (the original paper's crops, border and side strip). The typed
+ * "normal" layout still exists in the print page (and is used for any question without a crop); the dialog's
+ * Format choice was removed for now.
+ */
+const PDF_STYLE = "paper" as const;
 
 /** Server PDF; if the server can't make it, open the print page so the browser can save it as PDF. */
 async function runPdf(req: PdfRequest, fileName: string) {
@@ -174,8 +174,10 @@ function SelectionDialog({ open, onOpenChange, picked }: { open: boolean; onOpen
   const subjects = [...new Set(picked.map((e) => e.meta.subjectName))];
   const [title, setTitle] = useState("");
   const [answers, setAnswers] = useState<AnswerChoice>("end");
-  const [style, setStyle] = useState<PdfStyle>("normal");
+  const style = PDF_STYLE;
   const [busy, setBusy] = useState(false);
+  // whole questions (parts of one question count once), the same count as the selection bar
+  const wholeCount = new Set(picked.map(groupKeyOf)).size;
   const defaultTitle = `${subjects.length === 1 ? subjects[0] : "Practice"} questions`;
 
   async function download() {
@@ -183,8 +185,10 @@ function SelectionDialog({ open, onOpenChange, picked }: { open: boolean; onOpen
     const t = title.trim() || defaultTitle;
     const ids = picked.map((e) => e.question.id);
     // Separate answer sheet: the worksheet without answers, then the answers as their own PDF
-    await runPdf({ ids, answers: answers === "separate" ? "none" : answers, title: t, style }, safeName(t));
-    if (answers === "separate") await runPdf({ ids, answers: "only", title: t, style }, safeName(`${t} - Answers`));
+    // the PDF shows a title only if the teacher typed one (the file name always has one)
+    const shown = title.trim() || undefined;
+    await runPdf({ ids, answers: answers === "separate" ? "none" : answers, title: shown, style }, safeName(t));
+    if (answers === "separate") await runPdf({ ids, answers: "only", title: shown, style }, safeName(`${t} - Answers`));
     setBusy(false);
     onOpenChange(false);
   }
@@ -192,28 +196,24 @@ function SelectionDialog({ open, onOpenChange, picked }: { open: boolean; onOpen
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       {/* Touch: don't focus the title box on open (it would pop up the keyboard); mouse/keyboard: as before */}
-      <DialogContent className="max-h-[90dvh] gap-3 overflow-y-auto sm:max-w-lg" initialFocus={(type) => type !== "touch"}>
+      <DialogContent className="max-h-[96dvh] gap-4 overflow-y-auto sm:max-w-lg" initialFocus={(type) => type !== "touch"}>
         <DialogHeader>
           <DialogTitle>Download PDF</DialogTitle>
           <DialogDescription>
-            {picked.length} question{picked.length === 1 ? "" : "s"}, in the order you added them.
+            {wholeCount} question{wholeCount === 1 ? "" : "s"}, in the order you added them.
           </DialogDescription>
         </DialogHeader>
 
-        <div className="grid gap-1.5">
+        <div className="grid gap-2">
           <Label htmlFor="pdf-title">Title</Label>
-          <Input id="pdf-title" className="text-base sm:text-sm" value={title} onChange={(e) => setTitle(e.target.value)} placeholder={defaultTitle} />
+          <Input id="pdf-title" className="text-base sm:text-sm" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Optional — e.g. Projectile motion" />
         </div>
-        <div className="grid gap-1.5">
-          <Label>Format</Label>
-          <Segmented value={style} onChange={setStyle} options={STYLE_OPTIONS} aria-label="Format" className="sm:w-full [&>button]:flex-1" />
-        </div>
-        <div className="grid gap-1.5">
+        <div className="grid gap-2">
           <Label>Answers</Label>
           <Segmented value={answers} onChange={setAnswers} options={ANSWER_OPTIONS} aria-label="Answers" className="sm:w-full [&>button]:flex-1" />
         </div>
 
-        <ul className="grid max-h-[min(9rem,22dvh)] gap-1 overflow-y-auto rounded-lg border p-1">
+        <ul className="grid max-h-[max(12rem,calc(96dvh-23rem))] gap-1 overflow-y-auto rounded-lg border p-1">
           {picked.map((e, i) => (
             <li key={e.key} className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-muted">
               <span className="w-5 text-right text-xs text-muted-foreground tabular-nums">{i + 1}</span>
