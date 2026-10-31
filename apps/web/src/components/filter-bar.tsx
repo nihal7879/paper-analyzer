@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { difficultyLabel } from "@/lib/format";
 import { fetchFacets, useBankFacets } from "@/lib/bank-api";
-import { activeFilterCount, EMPTY_FILTERS, splitSubKey, type FacetOption, type Filters, type MultiKey } from "@/lib/question-bank";
+import { activeFilterCount, EMPTY_FILTERS, splitSubKey, type FacetOption, type Filters, type MultiKey, type SortKey } from "@/lib/question-bank";
 import { cn } from "@/lib/utils";
 
 // ---------------------------------------------------------------- search (an icon until clicked)
@@ -171,8 +171,8 @@ const labelOf = (opts: FacetOption[], v: string) => opts.find((o) => o.value ===
 
 /**
  * "Filters" panel: dropdowns in a row (a bottom sheet on phones).
- * Board → Level → Subject → Topic → Subtopic depend on each other: each lists only what exists under
- * the choices before it, and changing an earlier one drops later choices that no longer fit.
+ * Board, Level and Subject work across each other (Physics + AS Level = every board's AS Physics); each lists what
+ * exists with the other two. Topic → Subtopic follow them, and choices that no longer fit are dropped.
  */
 export const FilterPanel = memo(function FilterPanel({
   open,
@@ -183,7 +183,7 @@ export const FilterPanel = memo(function FilterPanel({
   open: boolean;
   onClose: () => void;
   filters: Filters;
-  onApply: (next: Omit<Filters, "q">) => void;
+  onApply: (next: Omit<Filters, "q">, sort?: SortKey) => void;
 }) {
   if (!open) return null;
   return <PanelBody applied={filters} onClose={onClose} onApply={onApply} />;
@@ -193,7 +193,7 @@ export const FilterPanel = memo(function FilterPanel({
  * The panel's choices are a draft: the question list only changes on "Done" (phones: "Show N questions").
  * Closing with ✕, outside or Esc forgets them.
  */
-function PanelBody({ applied, onClose, onApply }: { applied: Filters; onClose: () => void; onApply: (next: Omit<Filters, "q">) => void }) {
+function PanelBody({ applied, onClose, onApply }: { applied: Filters; onClose: () => void; onApply: (next: Omit<Filters, "q">, sort?: SortKey) => void }) {
   const [draft, setDraft] = useState(applied);
   // the search box stays live outside the panel; counts here follow it
   const filters = useMemo(() => ({ ...draft, q: applied.q }), [draft, applied.q]);
@@ -202,11 +202,16 @@ function PanelBody({ applied, onClose, onApply }: { applied: Filters; onClose: (
   const { facets } = useBankFacets(filters);
   const resultCount = facets.total ?? 0;
   const active = activeFilterCount(filters);
-  // Picking a subject also sets its board and level; its topics and paper numbers reset with it.
-  const onCourse = (course: string | null) => {
-    const o = course ? facets.subjects.find((x) => x.value === course) : undefined;
-    update(o ? { course, board: o.board ?? draft.board, level: o.level ?? draft.level, topic: [], sub: [], paper: [] } : { course: null, topic: [], sub: [], paper: [] });
+  // A subject spans every board (Physics = 8PH0, 9702 …): board and level stay as chosen; topics, subtopics and paper
+  // numbers of the old subject reset at once, and a board/level the new subject doesn't have is dropped by the server.
+  // Curriculum / year group / subject: several can be ticked. A changed subject resets topics, subtopics and papers
+  // (they belong to a syllabus); the server drops levels / subjects the other choices no longer have.
+  const toggleChain = (key: "board" | "level" | "course", v: string | null) => {
+    const list = v === null ? [] : filters[key].includes(v) ? filters[key].filter((x) => x !== v) : [...filters[key], v];
+    chain(key === "course" ? { course: list, topic: [], sub: [], paper: [], code: [] } : { [key]: list });
   };
+  // an older link / remembered choice can hold a syllabus code: show its subject name
+  const courseName = (c: string) => facets.subjects.find((o) => o.value === c || o.codes?.includes(c))?.label ?? c;
   const onClear = () => setDraft((d) => ({ ...EMPTY_FILTERS, q: d.q }));
   const apply = () => {
     const { q: _q, ...rest } = filters;
@@ -227,7 +232,7 @@ function PanelBody({ applied, onClose, onApply }: { applied: Filters; onClose: (
     void fetchFacets(wanted, true)
       .then((r) => {
         const fx = r.fixed;
-        if (fx) setDraft((d) => (d.board === wanted.board && d.level === wanted.level ? { ...d, level: fx.level, course: fx.course, topic: fx.topic, sub: fx.sub, paper: fx.paper } : d));
+        if (fx) setDraft((d) => (String(d.board) === String(wanted.board) && String(d.level) === String(wanted.level) ? { ...d, level: fx.level, course: fx.course, topic: fx.topic, sub: fx.sub, paper: fx.paper } : d));
       })
       .catch(() => {});
   };
@@ -280,47 +285,14 @@ function PanelBody({ applied, onClose, onApply }: { applied: Filters; onClose: (
         </div>
 
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
-          <Dropdown label="Board" summary={filters.board}>
-            {(close) => (
-              <OptionList
-                searchable
-                allLabel="All boards"
-                options={facets.boards}
-                selected={filters.board ? [filters.board] : []}
-                onPick={(v) => {
-                  chain({ board: v === filters.board ? null : v });
-                  close();
-                }}
-              />
-            )}
+          <Dropdown label="Curriculum" summary={summarize(filters.board)}>
+            {() => <OptionList multi searchable allLabel="All curriculums" options={facets.boards} selected={filters.board} onPick={(v) => toggleChain("board", v)} />}
           </Dropdown>
-          <Dropdown label="Level" summary={filters.level}>
-            {(close) => (
-              <OptionList
-                searchable
-                allLabel="All levels"
-                options={facets.levels}
-                selected={filters.level ? [filters.level] : []}
-                onPick={(v) => {
-                  chain({ level: v === filters.level ? null : v });
-                  close();
-                }}
-              />
-            )}
+          <Dropdown label="Year group / Grade" summary={summarize(filters.level)}>
+            {() => <OptionList multi searchable allLabel="All year groups" options={facets.levels} selected={filters.level} onPick={(v) => toggleChain("level", v)} />}
           </Dropdown>
-          <Dropdown label="Subject" summary={filters.course ? labelOf(facets.subjects, filters.course) : null}>
-            {(close) => (
-              <OptionList
-                searchable
-                allLabel="All subjects"
-                options={facets.subjects}
-                selected={filters.course ? [filters.course] : []}
-                onPick={(v) => {
-                  onCourse(v === filters.course ? null : v);
-                  close();
-                }}
-              />
-            )}
+          <Dropdown label="Subject" summary={summarize(filters.course.map(courseName))}>
+            {() => <OptionList multi searchable allLabel="All subjects" options={facets.subjects} selected={filters.course} onPick={(v) => toggleChain("course", v)} />}
           </Dropdown>
           <Dropdown label="Topic" summary={summarize(chosenTopics.map(topicLabel))} wide>
             {() => <OptionList multi searchable allLabel="All topics" options={topicOpts} selected={chosenTopics} onPick={pickTopic} />}
@@ -329,7 +301,7 @@ function PanelBody({ applied, onClose, onApply }: { applied: Filters; onClose: (
             {() => <OptionList multi searchable allLabel="All subtopics" options={subOpts} selected={filters.sub} onPick={pickSub} />}
           </Dropdown>
 
-          <Dropdown label="Year" summary={yearSummary} wide>
+          <Dropdown label="Exam year" summary={yearSummary} wide>
             {() => (
               <div className="p-2">
                 <YearRange bounds={facets.yearBounds} counts={facets.yearCounts} from={filters.yearFrom} to={filters.yearTo} update={update} />
@@ -339,13 +311,16 @@ function PanelBody({ applied, onClose, onApply }: { applied: Filters; onClose: (
           <Dropdown label="Season" summary={summarize(filters.season.map((v) => labelOf(facets.seasons, v)))}>
             {() => <OptionList multi allLabel="All seasons" options={facets.seasons} selected={filters.season} onPick={(v) => toggleMulti("season", v)} />}
           </Dropdown>
-          <Dropdown label="Paper" summary={summarize(filters.paper.map((v) => `Paper ${v}`))} wide>
+          <Dropdown label="Paper (Unit / Module)" summary={summarize(filters.paper.map((v) => labelOf(facets.papers, v).split(" · ")[0]))} wide>
             {() => <OptionList multi searchable allLabel="All papers" options={facets.papers} selected={filters.paper} onPick={(v) => toggleMulti("paper", v)} />}
           </Dropdown>
-          <Dropdown label="Type" summary={summarize(filters.type.map((v) => labelOf(facets.types, v)))}>
+          <Dropdown label="Paper code" summary={summarize(filters.code)}>
+            {() => <OptionList multi searchable allLabel="All paper codes" options={facets.codes} selected={filters.code} onPick={(v) => toggleMulti("code", v)} />}
+          </Dropdown>
+          <Dropdown label="Question type" summary={summarize(filters.type.map((v) => labelOf(facets.types, v)))}>
             {() => <OptionList multi allLabel="All types" options={facets.types} selected={filters.type} onPick={(v) => toggleMulti("type", v)} />}
           </Dropdown>
-          <Dropdown label="Difficulty" summary={summarize(filters.difficulty.map((d) => difficultyLabel(d as "EASY")))}>
+          <Dropdown label="Difficulty level" summary={summarize(filters.difficulty.map((d) => difficultyLabel(d as "EASY")))}>
             {() => (
               <OptionList
                 multi

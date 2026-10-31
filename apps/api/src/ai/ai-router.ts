@@ -77,6 +77,7 @@ export class AiRouter implements ExtractionProvider {
   }
 
   private async track<T>(run: (p: ExtractionProvider) => Promise<T>): Promise<T> {
+    if (process.env.PAPER_ANALYZER_OFFLINE === '1') throw new Error('External AI calls are disabled in offline mode; use a local extraction upload');
     const provider = this.current();
     const u = this.usage[(provider.name as AiProviderId) in this.usage ? (provider.name as AiProviderId) : 'mock'];
     u.requests++;

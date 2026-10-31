@@ -1,3 +1,4 @@
+import type { LocalExtraction } from '../papers/local-extraction.js';
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type { Env } from '../config/env.js';
@@ -25,6 +26,51 @@ export class ProcessingService {
     private readonly crops: QuestionCropsService,
   ) {
     this.concurrency = config.get('AI_PAGE_CONCURRENCY', { infer: true });
+  }
+
+  /** Explicit local-upload branch: never references the AI provider or its fallbacks. */
+  async processLocal(paperId: string, jobId: number, data: LocalExtraction): Promise<void> {
+    const status = this.newStatusWriter(jobId);
+    const keys = paperKeys(paperId);
+    try {
+      await status({ state: 'RENDERING', progress: 5, message: 'Rendering local extraction…' });
+      const qpPages = await renderPdfPages(await this.storage.read(keys.qp));
+      const msPages = await renderPdfPages(await this.storage.read(keys.ms));
+      for (const [kind, pages] of [['qp', qpPages], ['ms', msPages]] as const) {
+        for (const [i, image] of pages.entries()) await this.storage.write(keys.page(kind, i + 1), image);
+      }
+      const subject = await this.repo.findSubject(data.paper.subjectCode.toUpperCase());
+      const questions: ExtractedQuestion[] = [];
+      for (const q of data.questions) {
+        const images: ExtractedQuestion['images'] = [];
+        for (const [i, d] of q.diagrams.entries()) {
+          const box = normaliseBox(d.box);
+          if (!box) throw new Error(`Invalid diagram crop for ${q.number}`);
+          const path = keys.questionImage(questionId(q.number), i + 1);
+          await this.storage.write(path, await cropToWebp(qpPages[d.page - 1], box));
+          images.push({ path, page: d.page, box });
+        }
+        const topic = subject?.topics.find(t => t.code === q.topicCode);
+        questions.push({
+          number: q.number.replace(/\s+/g, ''), type: q.type, marks: q.marks, text: q.text,
+          options: q.options, topicCode: topic?.code ?? null, topic: topic?.name ?? '',
+          subtopic: q.subtopic, difficulty: q.difficulty, keywords: q.keywords,
+          page: q.page, pages: q.pages?.length ? q.pages : [q.page], images,
+          answer: q.answer, confidence: q.confidence,
+        });
+      }
+      await this.repo.saveExtraction(paperId, 'local', 'checked-transcription-v1', questions);
+      await status({ progress: 90, message: 'Cutting local worksheet crops…' });
+      const result = data.questions.every(q => q.localCrops)
+        ? await this.crops.buildLocalRegions(paperId, data.questions.map(q => ({ number: q.number, qp: q.localCrops!.qp, ms: q.localCrops!.ms })))
+        : await this.crops.buildForPaper(paperId, { allowAi: false });
+      if (result.notFound.length || result.ms < questions.length) throw new Error('Incomplete local worksheet crops; review required');
+      await status({ state: 'DONE', progress: 100, questionsFound: questions.length,
+        pagesTotal: qpPages.length, pagesDone: qpPages.length, message: `${questions.length} parts imported locally; awaiting admin review` });
+    } catch (err) {
+      await status({ state: 'FAILED', error: (err as Error).message, message: 'Local processing failed; no AI fallback was used' });
+      await this.repo.setPaperState(paperId, 'FAILED');
+    }
   }
 
   /** Render, read with AI, crop, match answers, save to the database. Progress goes to processing_jobs. */

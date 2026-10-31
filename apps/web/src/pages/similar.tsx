@@ -10,7 +10,7 @@ import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAdmin } from "@/lib/admin";
 import { AdminMenu } from "@/components/admin-menu";
-import { sourceLine } from "@/lib/api";
+import { paperShort, sourceLine } from "@/lib/api";
 import { difficultyLabel, difficultyStyle, typeLabel } from "@/lib/format";
 import { useEntries } from "@/lib/bank-api";
 import type { BankEntry } from "@/lib/question-bank";
@@ -90,7 +90,7 @@ export function SimilarPage() {
       </Card>
     );
 
-  const shortSource = (e: BankEntry) => `${e.meta.seasonName} ${e.meta.year} · Paper ${e.meta.paperCode} · Q${e.question.number}`;
+  const shortSource = (e: BankEntry) => `${e.meta.seasonName} ${e.meta.year} · ${paperShort(e.meta)} · Q${e.question.number}`;
 
   return (
     <div className={cn("grid grid-cols-[minmax(0,1fr)] gap-4", selected.length > 0 && "pb-20")}>

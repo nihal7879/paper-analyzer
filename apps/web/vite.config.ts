@@ -3,7 +3,7 @@ import react from "@vitejs/plugin-react";
 import { fileURLToPath } from "node:url";
 import { defineConfig } from "vite";
 
-const API_TARGET = process.env.API_PROXY_TARGET ?? "http://localhost:4100";
+const API_TARGET = process.env.API_PROXY_TARGET ?? "http://127.0.0.1:4100";
 const API_PROXY = {
   "/api": { target: API_TARGET, changeOrigin: true },
   "/files": { target: API_TARGET, changeOrigin: true },

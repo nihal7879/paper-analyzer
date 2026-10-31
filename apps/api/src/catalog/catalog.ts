@@ -112,7 +112,7 @@ export const SUBJECTS: Subject[] = [
 SUBJECTS.push({
   code: '8PH0',
   name: 'Physics',
-  board: 'Pearson Edexcel',
+  board: 'Edexcel',
   curriculum: 'Edexcel AS Level',
   components: [
     { number: 1, name: 'Core Physics I', style: 'MIXED' },

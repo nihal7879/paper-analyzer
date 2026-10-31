@@ -2,18 +2,10 @@ import { AlignLeft, CalendarDays, CalendarRange, Check, ChevronDown, ChevronRigh
 import { memo, useCallback, useDeferredValue, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Collapse } from "@/components/collapse";
 import { difficultyLabel, difficultyStyle } from "@/lib/format";
-import { splitSubKey, type FacetOption, type Facets, type Filters, type MultiKey, type TopicNode } from "@/lib/question-bank";
+import { splitSubKey, type FacetOption, type Facets, type Filters, type MultiKey, type SortKey, type TopicNode } from "@/lib/question-bank";
 import { cn } from "@/lib/utils";
 
-export type Update = (next: Partial<Filters>) => void;
-
-function Radio({ on }: { on: boolean }) {
-  return (
-    <span className={cn("flex size-4 shrink-0 items-center justify-center rounded-full border transition-colors", on && "border-primary")}>
-      {on && <span className="size-2 rounded-full bg-primary" />}
-    </span>
-  );
-}
+export type Update = (next: Partial<Filters>, sort?: SortKey) => void;
 
 // ---------------------------------------------------------------- search
 
@@ -75,7 +67,7 @@ type SectionId = "course" | "topic" | "year" | "exam" | "type";
 const SECTIONS: { id: SectionId; title: string; short: string; icon: typeof GraduationCap }[] = [
   { id: "course", title: "Course", short: "Course", icon: GraduationCap },
   { id: "topic", title: "Topic", short: "Topic", icon: AlignLeft },
-  { id: "year", title: "Year", short: "Year", icon: CalendarRange },
+  { id: "year", title: "Exam year", short: "Year", icon: CalendarRange },
   { id: "exam", title: "Paper & season", short: "Season", icon: CalendarDays },
   { id: "type", title: "Type & difficulty", short: "Type", icon: Gauge },
 ];
@@ -84,22 +76,22 @@ const SECTIONS: { id: SectionId; title: string; short: string; icon: typeof Grad
 function sectionSummaries(filters: Filters, facets: Facets): Record<SectionId, string | null> {
   const label = (opts: FacetOption[], v: string) => opts.find((o) => o.value === v)?.label.split(" · ")[0] ?? v;
   const list = (xs: string[]) => (xs.length === 0 ? null : xs.length <= 2 ? xs.join(", ") : `${xs[0]} +${xs.length - 1}`);
-  const subject = filters.course ? label(facets.subjects, filters.course).replace(/ \(.*\)$/, "") : null;
+  const subjects = filters.course.map((c) => label(facets.subjects, c).replace(/ \(.*\)$/, ""));
   return {
-    course: subject ?? filters.level ?? filters.board,
-    topic: list([...filters.topic, ...filters.sub.map((k) => splitSubKey(k).subtopic)]),
+    course: list(subjects.length ? subjects : filters.level.length ? filters.level : filters.board),
+    topic: list([...filters.topic.map((t) => facets.topics.find((n) => n.topic === t)?.label ?? t.split("\u001e").pop()!), ...filters.sub.map((k) => splitSubKey(k).subtopic)]),
     year: filters.yearFrom != null || filters.yearTo != null ? `${filters.yearFrom ?? facets.yearBounds?.min} – ${filters.yearTo ?? facets.yearBounds?.max}` : null,
-    exam: list([...filters.paper.map((v) => label(facets.papers, v)), ...filters.season.map((v) => label(facets.seasons, v))]),
+    exam: list([...filters.paper.map((v) => label(facets.papers, v)), ...filters.code, ...filters.season.map((v) => label(facets.seasons, v))]),
     type: list([...filters.type.map((v) => label(facets.types, v)), ...filters.difficulty.map((d) => difficultyLabel(d as "EASY"))]),
   };
 }
 
 /** How many things are picked in a section (the badge on the rail icon). */
 function sectionCount(id: SectionId, f: Filters): number {
-  if (id === "course") return [f.board, f.level, f.course].filter(Boolean).length;
+  if (id === "course") return f.board.length + f.level.length + f.course.length;
   if (id === "topic") return f.topic.length + f.sub.length;
   if (id === "year") return f.yearFrom != null || f.yearTo != null ? 1 : 0;
-  if (id === "exam") return f.paper.length + f.season.length;
+  if (id === "exam") return f.paper.length + f.code.length + f.season.length;
   return f.type.length + f.difficulty.length;
 }
 
@@ -107,7 +99,7 @@ const SubLabel = ({ children, first }: { children: React.ReactNode; first?: bool
   <span className={cn("px-1 text-[11px] font-semibold tracking-wide text-muted-foreground uppercase", !first && "pt-1")}>{children}</span>
 );
 
-const SectionBody = memo(function SectionBody({ id, filters, facets, update, onCourse }: { id: SectionId; filters: Filters; facets: Facets; update: Update; onCourse: (c: string | null) => void }) {
+const SectionBody = memo(function SectionBody({ id, filters, facets, update, onCourse }: { id: SectionId; filters: Filters; facets: Facets; update: Update; onCourse: (c: string[]) => void }) {
   const multi = (key: MultiKey) => ({
     value: filters[key],
     onToggle: (v: string) => update({ [key]: filters[key].includes(v) ? filters[key].filter((x) => x !== v) : [...filters[key], v] } as Partial<Filters>),
@@ -115,12 +107,12 @@ const SectionBody = memo(function SectionBody({ id, filters, facets, update, onC
   if (id === "course")
     return (
       <>
-        <SubLabel first>Board</SubLabel>
-        <RadioList options={facets.boards} value={filters.board} allLabel="All boards" onChange={(v) => update({ board: v, level: null, course: null, topic: [], sub: [], paper: [] })} />
-        <SubLabel>Level</SubLabel>
-        <RadioList options={facets.levels} value={filters.level} allLabel="All levels" onChange={(v) => update({ level: v, course: null, topic: [], sub: [], paper: [] })} />
+        <SubLabel first>Curriculum</SubLabel>
+        <ChipGroup options={facets.boards} {...multi("board")} />
+        <SubLabel>Year group / Grade</SubLabel>
+        <ChipGroup options={facets.levels} {...multi("level")} />
         <SubLabel>Subject</SubLabel>
-        <RadioList options={facets.subjects} value={filters.course} allLabel="All subjects" onChange={onCourse} />
+        <ChipGroup options={facets.subjects} value={filters.course} onToggle={(v) => onCourse(filters.course.includes(v) ? filters.course.filter((x) => x !== v) : [...filters.course, v])} />
       </>
     );
   if (id === "topic") return <TopicTree nodes={facets.topics} filters={filters} update={update} />;
@@ -128,8 +120,10 @@ const SectionBody = memo(function SectionBody({ id, filters, facets, update, onC
   if (id === "exam")
     return (
       <>
-        <SubLabel first>Paper</SubLabel>
+        <SubLabel first>Paper (Unit / Module)</SubLabel>
         <ChipGroup options={facets.papers} format={(o) => o.label.split(" · ")[0]} {...multi("paper")} />
+        <SubLabel>Paper code</SubLabel>
+        <ChipGroup options={facets.codes} {...multi("code")} />
         <SubLabel>Season</SubLabel>
         <ChipGroup options={facets.seasons} {...multi("season")} />
       </>
@@ -138,7 +132,7 @@ const SectionBody = memo(function SectionBody({ id, filters, facets, update, onC
     <>
       <SubLabel first>Question type</SubLabel>
       <ChipGroup options={facets.types} {...multi("type")} />
-      <SubLabel>Difficulty</SubLabel>
+      <SubLabel>Difficulty level</SubLabel>
       <DifficultyPills options={facets.difficulties} {...multi("difficulty")} />
     </>
   );
@@ -163,7 +157,7 @@ export const FilterRail = memo(function FilterRail({
   update: Update;
   active: number;
   onClear: () => void;
-  onCourse: (course: string | null) => void;
+  onCourse: (course: string[]) => void;
 }) {
   // `open`: the chosen tab. `shown`: what the panel draws — kept for a moment while it slides away.
   const [open, setOpen] = useState<SectionId | null>(null);
@@ -342,7 +336,7 @@ export const FilterPanel = memo(function FilterPanel({
   active: number;
   onClear: () => void;
   /** Picking a subject = picking the course (remembered, resets topics). */
-  onCourse: (course: string | null) => void;
+  onCourse: (course: string[]) => void;
   hideHeader?: boolean;
 }) {
   // One section open at a time; all closed when the page loads.
@@ -371,35 +365,6 @@ export const FilterPanel = memo(function FilterPanel({
     </div>
   );
 });
-
-function RadioList({ options, value, allLabel, onChange }: { options: FacetOption[]; value: string | null; allLabel: string; onChange: (v: string | null) => void }) {
-  const total = options.reduce((s, o) => s + o.count, 0);
-  const rows = [{ value: null as string | null, label: allLabel, count: total }, ...options];
-  return (
-    <div role="radiogroup" className="grid grid-cols-[minmax(0,1fr)] gap-0.5">
-      {rows.map((o) => {
-        const on = o.value === value;
-        return (
-          <button
-            key={o.value ?? "all"}
-            type="button"
-            role="radio"
-            aria-checked={on}
-            onClick={() => onChange(o.value)}
-            className={cn(
-              "flex items-center gap-2.5 rounded-md px-2 py-2.5 text-left text-[15px] transition-colors hover:bg-muted lg:py-1.5 lg:text-sm",
-              on && "bg-primary/5 text-primary",
-            )}
-          >
-            <Radio on={on} />
-            <span className="min-w-0 flex-1 truncate">{o.label}</span>
-            <span className="text-xs text-muted-foreground tabular-nums">{o.count}</span>
-          </button>
-        );
-      })}
-    </div>
-  );
-}
 
 /** One accordion section: title + what is picked ("All" when nothing) + chevron. Opening one closes the others. */
 function AccordionSection({
@@ -765,14 +730,15 @@ export function ActiveChips({
   facets: Facets;
   update: Update;
   onClear: () => void;
-  onCourse: (course: string | null) => void;
+  onCourse: (course: string[]) => void;
 }) {
   const chips: { key: string; label: string; remove: () => void }[] = [];
-  if (filters.board) chips.push({ key: "board", label: filters.board, remove: () => update({ board: null, level: null, course: null, topic: [], sub: [], paper: [] }) });
-  if (filters.level) chips.push({ key: "level", label: filters.level, remove: () => update({ level: null, course: null, topic: [], sub: [], paper: [] }) });
-  if (filters.course) {
-    const c = facets.subjects.find((o) => o.value === filters.course);
-    chips.push({ key: "course", label: c?.label ?? filters.course, remove: () => onCourse(null) });
+  // board, level and subject are independent (Physics + AS Level = every board's AS Physics)
+  for (const v of filters.board) chips.push({ key: `board-${v}`, label: v, remove: () => update({ board: filters.board.filter((x) => x !== v) }) });
+  for (const v of filters.level) chips.push({ key: `level-${v}`, label: v, remove: () => update({ level: filters.level.filter((x) => x !== v) }) });
+  for (const v of filters.course) {
+    const c = facets.subjects.find((o) => o.value === v || o.codes?.includes(v));
+    chips.push({ key: `course-${v}`, label: c?.label ?? v, remove: () => onCourse(filters.course.filter((x) => x !== v)) });
   }
   for (const t of filters.topic) {
     const node = facets.topics.find((n) => n.topic === t);
@@ -786,6 +752,7 @@ export function ActiveChips({
   }
   const groups: { key: MultiKey; options: FacetOption[]; format?: (o: FacetOption) => string }[] = [
     { key: "paper", options: facets.papers, format: (o) => o.label.split(" · ")[0] },
+    { key: "code", options: facets.codes },
     { key: "season", options: facets.seasons },
     { key: "type", options: facets.types },
     { key: "difficulty", options: facets.difficulties, format: (o) => difficultyLabel(o.value as "EASY") },

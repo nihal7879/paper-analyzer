@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { ArrowDownUp, ArrowUp, CheckCheck, CircleCheck, Library, Loader2, SearchX, X } from "lucide-react";
-import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useNavigationType, useSearchParams } from "react-router";
 import { ActiveChips } from "@/components/bank-filters";
 import { FilterPanel, FiltersButton, SearchToggle } from "@/components/filter-bar";
@@ -17,7 +17,7 @@ import { Card } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAdmin } from "@/lib/admin";
-import { api } from "@/lib/api";
+import { api, setBoardInSource } from "@/lib/api";
 import { selection, useSelection } from "@/lib/selection";
 import { fetchIds, PAGE_SIZE, useBankFacets, useBankPages, useEntries } from "@/lib/bank-api";
 import { activeFilterCount, EMPTY_FILTERS, filtersFromParams, filtersToParams, rememberCourse, type Filters, type SortKey } from "@/lib/question-bank";
@@ -46,6 +46,7 @@ const SORT_ITEMS: { value: SortKey; label: string }[] = [
   { value: "newest", label: "Newest papers first" },
   { value: "oldest", label: "Oldest papers first" },
   { value: "topic", label: "By topic" },
+  { value: "board", label: "By board & level" },
 ];
 
 export function BrowsePage() {
@@ -81,10 +82,16 @@ export function BrowsePage() {
   const adminPapers = useQuery({ queryKey: ["papers"], queryFn: api.papers, enabled: isAdmin });
   const unpublishedCount = (adminPapers.data ?? []).filter((p) => p.meta.paperState !== "PUBLISHED").length;
 
+  // Several boards in the results: each question's source line names its board (the list re-renders when this flips).
+  const mixedBoards = facets.boards.filter((b) => b.count > 0).length > 1;
+  setBoardInSource(mixedBoards);
+
   // A remembered / linked course that has no published questions is ignored.
-  const knownCourse = !filters.course || facetsFetching || facets.subjects.length === 0 || facets.subjects.some((o) => o.value === filters.course);
+  const isKnown = (c: string) => facets.subjects.some((o) => o.value === c || o.codes?.includes(c));
+  const knownCourse = !filters.course.length || facetsFetching || facets.subjects.length === 0 || filters.course.every(isKnown);
   useEffect(() => {
-    if (!knownCourse) setFilters((f) => ({ ...f, course: null }));
+    if (!knownCourse) setFilters((f) => ({ ...f, course: f.course.filter(isKnown) }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [knownCourse]);
   // Typeset the loaded questions' maths in idle time, so scrolling and re-filtering reuse it.
   useEffect(() => {
@@ -186,8 +193,8 @@ export function BrowsePage() {
   const selectedSet = useMemo(() => new Set(selected), [selected]);
   const resultIds = idsQuery.data?.ids ?? [];
   const allResultsSelected = resultIds.length > 0 && resultIds.every((id) => selectedSet.has(id));
-  // Questions added by "Select all" (not ones ticked one by one): they belong to that filter, so they're
-  // dropped again when the filter changes. Hand-picked questions stay selected across filters.
+  // Questions added by "Select all" belong to the filter they were picked under, so they are dropped when it changes
+  // (any change to the side-panel filters clears the whole pick: see panelKey below).
   const bulkPicked = useRef<string[]>([]);
   const selectAll = async () => {
     const ids = idsQuery.data?.ids ?? (await fetchIds(filters, sort)).ids;
@@ -208,6 +215,17 @@ export function BrowsePage() {
     bulkPicked.current = [];
   }, [filterKey]);
 
+  // Changing a filter (board, level, subject, topic, year …) starts a new pick: whatever was selected for the PDF under
+  // the old filter is removed, so it doesn't show up under the new one. (Typing in the search box keeps the pick.)
+  const panelKey = filtersToParams({ ...filters, q: "" }, "newest").toString();
+  const lastPanelKey = useRef(panelKey);
+  useEffect(() => {
+    if (lastPanelKey.current === panelKey) return;
+    lastPanelKey.current = panelKey;
+    selection.clear();
+    bulkPicked.current = [];
+  }, [panelKey]);
+
   const update = useCallback((next: Partial<Filters>, nextSort?: SortKey) => {
     setFilters((f) => ({ ...f, ...next }));
     if (next.q !== undefined) setTypedQ(next.q);
@@ -215,18 +233,17 @@ export function BrowsePage() {
   }, []);
   // "Clear all" clears every side-panel filter (board, level, subject too); the search box stays.
   const clearAll = useCallback(() => {
-    rememberCourse(null);
+    rememberCourse([]);
     setFilters((f) => ({ ...EMPTY_FILTERS, q: f.q }));
   }, []);
   const setCourse = useCallback(
-    (course: string | null) => {
+    (course: string[]) => {
       rememberCourse(course);
-      // Picking a subject also sets its board and level (so all three filters agree);
-      // topics and paper numbers belong to a course, so they reset with it.
-      const o = course ? facets.subjects.find((x) => x.value === course) : undefined;
-      update(o ? { course, board: o.board ?? null, level: o.level ?? null, topic: [], sub: [], paper: [] } : { course: null, topic: [], sub: [], paper: [] });
+      // A subject spans every board (Physics = 8PH0, 9702 …): board and level stay as chosen.
+      // Topics and paper numbers belong to a syllabus, so they reset with it.
+      update({ course, topic: [], sub: [], paper: [], code: [] });
     },
-    [update, facets.subjects],
+    [update],
   );
   const setQuery = useCallback((q: string) => setTypedQ(q), []);
   const clearQuery = useCallback(() => update({ q: "" }), [update]);
@@ -238,9 +255,9 @@ export function BrowsePage() {
   const closeFilters = useCallback(() => setFiltersOpen(false), []);
   // "Done" in the filter panel: its choices replace the current ones (the search text stays).
   const applyFilters = useCallback(
-    (next: Omit<Filters, "q">) => {
+    (next: Omit<Filters, "q">, nextSort?: SortKey) => {
       rememberCourse(next.course);
-      update(next);
+      update(next, nextSort);
     },
     [update],
   );
@@ -374,31 +391,44 @@ export function BrowsePage() {
                     Clear filters
                   </Button>
                 )}
-                {filters.course && (
-                  <Button variant="ghost" onClick={() => setCourse(null)}>
+                {filters.course.length > 0 && (
+                  <Button variant="ghost" onClick={() => setCourse([])}>
                     Search all courses
                   </Button>
                 )}
               </div>
             </Card>
           ) : viewMode === "single" ? (
-            <SingleQuestionView results={groups} total={total} onNeedMore={list.loadMore} index={singleIndex} onIndex={setSingleIndex} />
+            <SingleQuestionView key={mixedBoards ? "mixed" : "one"} results={groups} total={total} onNeedMore={list.loadMore} index={singleIndex} onIndex={setSingleIndex} />
           ) : (
             <>
-              <div className={cn("grid gap-4 transition-opacity duration-200", list.isUpdating && "opacity-60")}>
-                {groups.map((e, n) => (
-                  <div key={e.key} className="card-auto" data-card-key={e.key}>
-                    <QuestionCard
-                      question={e.question}
-                      meta={e.meta}
-                      parts={e.partQuestions}
-                      matched={e.matched}
-                      similar={e.similar}
-                      selectable
-                      serial={n + 1}
-                    />
-                  </div>
-                ))}
+              <div key={mixedBoards ? "mixed" : "one"} className={cn("grid gap-4 transition-opacity duration-200", list.isUpdating && "opacity-60")}>
+                {groups.map((e, n) => {
+                  // "By board & level": a heading where the next board / level starts
+                  const prev = groups[n - 1]?.meta;
+                  const heading = sort === "board" && (!prev || prev.board !== e.meta.board || prev.curriculum !== e.meta.curriculum);
+                  return (
+                    <Fragment key={e.key}>
+                      {heading && (
+                        <h2 className={cn("flex items-center gap-2 text-sm font-semibold text-primary", n > 0 && "pt-3")}>
+                          <span className="rounded-full bg-primary/10 px-2.5 py-1">{e.meta.board}</span>
+                          <span>{e.meta.curriculum}</span>
+                        </h2>
+                      )}
+                      <div className="card-auto" data-card-key={e.key}>
+                        <QuestionCard
+                          question={e.question}
+                          meta={e.meta}
+                          parts={e.partQuestions}
+                          matched={e.matched}
+                          similar={e.similar}
+                          selectable
+                          serial={n + 1}
+                        />
+                      </div>
+                    </Fragment>
+                  );
+                })}
               </div>
               <LoadMoreSentinel enabled={list.hasMore && !list.isLoadingMore} onVisible={list.loadMore} />
               <div className="flex flex-col items-center gap-3 py-4">

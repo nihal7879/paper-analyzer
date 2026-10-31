@@ -1,6 +1,7 @@
 import { BadRequestException, Inject, Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import type { Knex } from 'knex';
 import { KNEX } from '../database/database.module.js';
+import { paperFacetLabel } from './paper-label.js';
 import type { PaperMeta, Question } from './paper.types.js';
 import { PapersRepository } from './papers.repository.js';
 
@@ -13,42 +14,62 @@ import { PapersRepository } from './papers.repository.js';
  */
 
 export interface BankFilters {
-  board: string | null;
-  level: string | null;
-  course: string | null;
+  /** Boards (curricula) by name, any of them. */
+  board: string[];
+  /** General levels ("AS Level", every board), any of them. */
+  level: string[];
+  /** Subjects by name ("Physics", every board), any of them. */
+  course: string[];
   q: string;
   topic: string[];
   sub: string[];
+  /** Common topics (shared by every board), by name. */
   yearFrom: number | null;
   yearTo: number | null;
   paper: string[];
+  /** Printed paper codes: 7408/1, 8PH0/01, WPH11, PH01, WME01. */
+  code: string[];
   season: string[];
   type: string[];
   difficulty: string[];
   marks: string[];
 }
-export type BankSort = 'newest' | 'oldest' | 'topic';
-type Skip = 'board' | 'level' | 'course' | 'topic' | 'year' | 'paper' | 'season' | 'type' | 'difficulty' | 'marks' | 'q';
+export type BankSort = 'newest' | 'oldest' | 'topic' | 'board';
+type Skip = 'board' | 'level' | 'course' | 'topic' | 'year' | 'paper' | 'code' | 'season' | 'type' | 'difficulty' | 'marks' | 'q';
 type Entry = { meta: PaperMeta; question: Question; order: number };
 export interface FacetOption {
   value: string;
   label: string;
   count: number;
-  board?: string;
-  level?: string;
+  /** Subjects: the syllabus codes under this name (Physics = 8PH0, 9702 …). */
+  codes?: string[];
 }
 
-const MULTI = ['paper', 'season', 'type', 'difficulty', 'marks'] as const;
-const ALL_BUT_CHAIN: Skip[] = ['topic', 'year', 'paper', 'season', 'type', 'difficulty', 'marks', 'q'];
+const MULTI = ['paper', 'code', 'season', 'type', 'difficulty', 'marks'] as const;
+const ALL_BUT_CHAIN: Skip[] = ['topic', 'year', 'paper', 'code', 'season', 'type', 'difficulty', 'marks', 'q'];
 const SUB_SEP = '\u001f';
 // Same values the website uses (see web lib/question-bank.ts)
-const TOPIC = "COALESCE(t.name, 'General')";
+// Each board names its topics after its own textbook: a topic is kept apart per book ("Edexcel", "Edexcel International",
+// "AQA", "AQA International"), so the same name in two books stays two choices. Value: "<book>\u001e<topic name>".
+const BOOK = "CONCAT(b.name, IF(c.level LIKE 'International%', ' International', ''))";
+const TOPIC_SEP = "\u001e";
+const TOPIC = `CONCAT(${BOOK}, CHAR(30), COALESCE(t.name, 'General'))`;
 const SUBKEY = `CONCAT(${TOPIC}, CHAR(31), COALESCE(st.name, q.subtopic_label, ''))`;
 // CAST(… AS CHAR) gives MySQL's default collation; pin it to the tables' one so values can be combined / compared
 const CHAR = (sql: string) => `CAST(${sql} AS CHAR) COLLATE utf8mb4_unicode_ci`;
 const PAPER = `COALESCE(${CHAR('co.number')}, IF(p.paper_code REGEXP '^[0-9]+', ${CHAR('CAST(p.paper_code AS UNSIGNED)')}, p.paper_code))`;
+// The printed paper code (see paper-label.ts): "(WPH11)" at the end of the component name, else subject code / paper code.
+const CODE = CHAR(
+  "IF(RIGHT(TRIM(p.component_name), 1) = ')', TRIM(SUBSTRING_INDEX(SUBSTRING_INDEX(p.component_name, '(', -1), ')', 1)), CONCAT(s.code, '/', p.paper_code))",
+);
 const TYPE = "IF(q.type = 'MCQ', 'MCQ', 'WRITTEN')";
 const MARKS = CHAR('q.marks');
+// The general level of a part, the same across boards: "AS Level", "A Level", "International A Level".
+// Cambridge keeps AS and A Level in one syllabus: papers 1–3 are AS, 4–5 A Level.
+// KS3: the year a topic is taught in (Year 7 / 8 / 9, set on the subtopic or topic) comes first.
+const LEVEL = CHAR(
+  "COALESCE(st.year_group, t.year_group, CASE WHEN c.level = 'AS & A Level' THEN IF(COALESCE(co.number, FLOOR(CAST(p.paper_code AS UNSIGNED) / 10)) BETWEEN 1 AND 3, 'AS Level', 'A Level') ELSE c.level END, c.name)",
+);
 const WHOLE = 'COUNT(DISTINCT q.paper_id, q.base_number)';
 const PAGE_MAX = 50;
 const IDS_MAX = 5000;
@@ -173,18 +194,19 @@ export class BankSearchService implements OnModuleInit {
       return Number.isFinite(v) && one(k) !== null ? v : null;
     };
     const sort = (one('sort') ?? 'newest') as BankSort;
-    if (!['newest', 'oldest', 'topic'].includes(sort)) throw new BadRequestException('Unknown sort');
+    if (!['newest', 'oldest', 'topic', 'board'].includes(sort)) throw new BadRequestException('Unknown sort');
     return {
       f: {
-        board: one('board'),
-        level: one('level'),
-        course: one('course'),
+        board: list('board'),
+        level: list('level'),
+        course: list('course'),
         q: (one('q') ?? '').slice(0, 200),
         topic: list('topic'),
         sub: list('sub'),
         yearFrom: num('yf'),
         yearTo: num('yt'),
         paper: list('paper'),
+        code: list('code'),
         season: list('season'),
         type: list('type'),
         difficulty: list('difficulty'),
@@ -213,9 +235,11 @@ export class BankSearchService implements OnModuleInit {
       .where('p.status', 'PUBLISHED')
       .where('q.status', 'PUBLISHED')
       .whereNull('q.deleted_at');
-    if (!s.has('board') && f.board) qb.where('b.name', f.board);
-    if (!s.has('level') && f.level) qb.where('c.name', f.level);
-    if (!s.has('course') && f.course) qb.where('s.code', f.course);
+    if (!s.has('board') && f.board.length) qb.whereIn('b.name', f.board);
+    // level: the general level ("AS Level", every board); older links name a board's own level ("Edexcel AS Level")
+    if (!s.has('level') && f.level.length) qb.where((w) => w.whereRaw(`${LEVEL} IN (${f.level.map(() => '?').join(', ')})`, f.level).orWhereIn('c.name', f.level));
+    // course: a subject by name ("Physics", every board); older links / remembered choices give a code ("8PH0")
+    if (!s.has('course') && f.course.length) qb.where((w) => w.whereIn('s.name', f.course).orWhereIn('s.code', f.course));
     // `expr IN (?, ?, …)` for computed values (topic name, subtopic key, paper number, type, marks)
     const inList = (expr: string, values: string[]) => [`${expr} IN (${values.map(() => '?').join(', ')})`, values] as const;
     if (!s.has('topic') && (f.topic.length || f.sub.length))
@@ -228,6 +252,7 @@ export class BankSearchService implements OnModuleInit {
       if (f.yearTo != null) qb.where('p.year', '<=', f.yearTo);
     }
     if (!s.has('paper') && f.paper.length) qb.whereRaw(...inList(PAPER, f.paper));
+    if (!s.has('code') && f.code.length) qb.whereRaw(...inList(CODE, f.code));
     if (!s.has('season') && f.season.length) qb.whereIn('p.season_code', f.season);
     if (!s.has('type') && f.type.length) qb.whereRaw(...inList(TYPE, f.type));
     if (!s.has('difficulty') && f.difficulty.length) qb.whereIn('q.difficulty', f.difficulty);
@@ -253,11 +278,14 @@ export class BankSearchService implements OnModuleInit {
         .clearSelect()
         .select('q.paper_id', 'q.base_number')
         .min({ ord: 'q.sort_order' })
-        .max({ yr: 'p.year', se: 'se.sort_order', pc: 'p.paper_code' })
+        .max({ yr: 'p.year', se: 'se.sort_order', pc: 'p.paper_code', bn: 'b.name', cn: 'c.name' })
         .select(this.db.raw('MIN(COALESCE(t.sort_order, 9999)) as ts, MIN(COALESCE(st.sort_order, 9999)) as sts'))
         .groupBy('q.paper_id', 'q.base_number');
       if (sort === 'newest') groups.orderBy([{ column: 'yr', order: 'desc' }, { column: 'se', order: 'desc' }, { column: 'pc', order: 'asc' }, { column: 'ord', order: 'asc' }]);
       if (sort === 'oldest') groups.orderBy([{ column: 'yr', order: 'asc' }, { column: 'se', order: 'asc' }, { column: 'pc', order: 'desc' }, { column: 'ord', order: 'asc' }]);
+      // grouped by board, then level (results from several boards), newest first inside each
+      if (sort === 'board')
+        groups.orderBy([{ column: 'bn', order: 'asc' }, { column: 'cn', order: 'asc' }, { column: 'yr', order: 'desc' }, { column: 'se', order: 'desc' }, { column: 'pc', order: 'asc' }, { column: 'ord', order: 'asc' }]);
       if (sort === 'topic')
         groups.orderBy([{ column: 'ts', order: 'asc' }, { column: 'sts', order: 'asc' }, { column: 'yr', order: 'desc' }, { column: 'se', order: 'desc' }, { column: 'pc', order: 'asc' }, { column: 'ord', order: 'asc' }]);
     return groups;
@@ -333,7 +361,16 @@ export class BankSearchService implements OnModuleInit {
           .clearSelect()
           .select(this.db.raw(`${value} as v, MAX(${label}) as l, ${WHOLE} as n${extra ? `, ${extra}` : ''}`))
           .groupByRaw(value);
-        return rows.filter((r) => r.v != null && r.v !== '').map((r) => ({ value: String(r.v), label: String(r.l), count: Number(r.n), ...(r.ord != null ? { ord: Number(r.ord) } : {}), ...(r.board ? { board: r.board, level: r.level } : {}) }));
+        return rows
+          .filter((r) => r.v != null && r.v !== '')
+          .map((r) => ({
+            value: String(r.v),
+            // papers: named as printed, from every paper behind the option ("subject|paper code|component name" rows)
+            label: r.pinfo ? paperFacetLabel(String(r.pinfo).split('\n').map((x) => x.split('|')).map(([subjectCode, paperCode, componentName]) => ({ subjectCode, paperCode, componentName: componentName || null }))) : String(r.l),
+            count: Number(r.n),
+            ...(r.ord != null ? { ord: Number(r.ord) } : {}),
+            ...(r.codes ? { codes: String(r.codes).split(',') } : {}),
+          }));
       };
       const withSelected = (opts: FacetOption[], selected: string[], label: (v: string) => string) => {
         for (const v of selected) if (!opts.some((o) => o.value === v)) opts.push({ value: v, label: label(v), count: 0 });
@@ -342,17 +379,19 @@ export class BankSearchService implements OnModuleInit {
       const byCount = (a: FacetOption, b: FacetOption) => b.count - a.count || a.label.localeCompare(b.label);
       const markLabel = (v: string) => `${v} mark${v === '1' ? '' : 's'}`;
 
-      const [boards, levels, subjects, topicRows, topicCounts, subCounts, bounds, yearCounts, papers, seasons, types, difficulties, marks, total] = await Promise.all([
-        // Chain: Board -> Level -> Subject -> Topic, each list depends only on the choices before it
-        count(['board', 'level', 'course', 'topic'], 'b.name', 'b.name'),
-        count(['level', 'course', 'topic'], 'c.name', 'c.name'),
-        count(['course', 'topic'], 's.code', "CONCAT(s.name, ' (', s.code, ')')", 'MAX(b.name) as board, MAX(c.name) as level'),
+      const [boards, levels, subjects, topicRows, topicCounts, subCounts, bounds, yearCounts, papers, codes, seasons, types, difficulties, marks, total] = await Promise.all([
+        // Board, Level and Subject work across each other (Physics + AS Level = every board's AS Physics):
+        // each list counts with the other two applied; topics depend on all three
+        count(['board', 'topic'], 'b.name', 'b.name'),
+        count(['level', 'topic'], LEVEL, LEVEL),
+        count(['course', 'topic'], 's.name', 's.name', 'GROUP_CONCAT(DISTINCT s.code) as codes'),
         this.base(g, ALL_BUT_CHAIN).clearSelect().distinct(this.db.raw(`${TOPIC} as topic, t.code as code, COALESCE(st.name, q.subtopic_label, '') as sub, st.code as subCode`)),
         this.base(g, ['topic']).clearSelect().select(this.db.raw(`${TOPIC} as topic, ${WHOLE} as n`)).groupByRaw(TOPIC),
         this.base(g, ['topic']).clearSelect().select(this.db.raw(`${SUBKEY} as k, ${WHOLE} as n`)).groupByRaw(SUBKEY),
         this.base(g, ALL_BUT_CHAIN).clearSelect().select(this.db.raw('MIN(p.year) as min, MAX(p.year) as max')).first() as Promise<{ min: number | null; max: number | null } | undefined>,
         count(['year'], CHAR('p.year'), CHAR('p.year')),
-        count(['paper'], PAPER, `CONCAT('Paper ', ${PAPER}, IF(p.component_name IS NULL OR p.component_name = '', '', CONCAT(' · ', p.component_name)))`),
+        count(['paper'], PAPER, `CONCAT('Paper ', ${PAPER})`, `GROUP_CONCAT(DISTINCT CONCAT_WS('|', s.code, p.paper_code, IFNULL(p.component_name, '')) SEPARATOR '\\n') as pinfo`),
+        count(['code'], CODE, CODE),
         count(['season'], 'p.season_code', 'se.name', 'MAX(se.sort_order) as ord'),
         count(['type'], TYPE, `IF(q.type = 'MCQ', 'MCQ', 'Written')`),
         count(['difficulty'], 'q.difficulty', 'q.difficulty'),
@@ -360,7 +399,10 @@ export class BankSearchService implements OnModuleInit {
         this.base(g).clearSelect().select(this.db.raw(`${WHOLE} as n`)).first(),
       ]);
 
-      // Topic tree: topics (in the chosen board / level / subject) -> syllabus subtopics, with counts
+      // Topic tree: topics (in the chosen board / level / subject) -> textbook subtopics, with counts.
+      // With several books in play each topic says which book it is from ("Projectiles · Edexcel International").
+      const inPlay = (await this.base(g, ALL_BUT_CHAIN).clearSelect().countDistinct({ n: this.db.raw(BOOK) }).first()) as { n: number } | undefined;
+      const mixed = Number(inPlay?.n ?? 0) > 1;
       const tCount = new Map(topicCounts.map((r: any) => [r.topic, Number(r.n)]));
       const sCount = new Map(subCounts.map((r: any) => [r.k, Number(r.n)]));
       const nodes = new Map<string, { topic: string; code: string | null; subs: Map<string, string | null> }>();
@@ -370,10 +412,14 @@ export class BankSearchService implements OnModuleInit {
         if (r.sub && !n.subs.has(r.sub)) n.subs.set(r.sub, r.subCode ?? null);
       }
       const topics = [...nodes.values()]
-        .sort((a, b) => compareCodes(a.code, b.code) || a.topic.localeCompare(b.topic))
-        .map((n) => ({
+        .sort((a, b) => a.topic.split(TOPIC_SEP)[0].localeCompare(b.topic.split(TOPIC_SEP)[0]) || compareCodes(a.code, b.code) || a.topic.localeCompare(b.topic))
+        .map((n) => {
+          const [book, name] = n.topic.split(TOPIC_SEP);
+          return { n, label: mixed ? `${name} · ${book}` : n.code ? `${n.code}. ${name}` : name };
+        })
+        .map(({ n, label }) => ({
           topic: n.topic,
-          label: n.code ? `${n.code}. ${n.topic}` : n.topic,
+          label,
           count: tCount.get(n.topic) ?? 0,
           subs: [...n.subs.entries()]
             .sort(([an, ac], [bn, bc]) => compareCodes(ac, bc) || an.localeCompare(bn))
@@ -388,6 +434,7 @@ export class BankSearchService implements OnModuleInit {
         yearBounds: bounds?.min != null ? { min: Number(bounds.min), max: Number(bounds.max) } : null,
         yearCounts: Object.fromEntries(yearCounts.map((o) => [o.value, o])),
         papers: withSelected(papers, g.paper, (v) => `Paper ${v}`).sort((a, b) => Number(a.value) - Number(b.value)),
+        codes: withSelected(codes, g.code, (v) => v).sort((a, b) => a.value.localeCompare(b.value, undefined, { numeric: true })),
         seasons: withSelected(seasons, g.season, (v) => v).sort((a: any, b: any) => (a.ord ?? 9) - (b.ord ?? 9)),
         types: withSelected(types, g.type, (v) => v).sort((a) => (a.value === 'MCQ' ? -1 : 1)),
         difficulties: withSelected(difficulties, g.difficulty, (v) => v).sort((a, b) => ['EASY', 'MEDIUM', 'HARD'].indexOf(a.value) - ['EASY', 'MEDIUM', 'HARD'].indexOf(b.value)),
@@ -402,15 +449,23 @@ export class BankSearchService implements OnModuleInit {
   private async fixChain(f: BankFilters): Promise<BankFilters> {
     const next = { ...f };
     const chainOnly = (x: BankFilters) => this.base(x, ALL_BUT_CHAIN).clearSelect();
-    if (next.level && !(await chainOnly({ ...next, course: null }).first(this.db.raw('1 as ok')))) next.level = null;
-    if (next.course && !(await chainOnly(next).first(this.db.raw('1 as ok')))) next.course = null;
-    const rows: any[] = await chainOnly(next).distinct(this.db.raw(`${TOPIC} as topic, ${SUBKEY} as k, ${PAPER} as paper`));
+    // keep only the levels / subjects that still have questions under the chosen boards (and levels)
+    const exists = async (x: BankFilters) => !!(await chainOnly(x).first(this.db.raw('1 as ok')));
+    const keptLevels: string[] = [];
+    for (const l of next.level) if (await exists({ ...next, level: [l], course: [] })) keptLevels.push(l);
+    next.level = keptLevels;
+    const keptCourses: string[] = [];
+    for (const c of next.course) if (await exists({ ...next, course: [c] })) keptCourses.push(c);
+    next.course = keptCourses;
+    const rows: any[] = await chainOnly(next).distinct(this.db.raw(`${TOPIC} as topic, ${SUBKEY} as k, ${PAPER} as paper, ${CODE} as code`));
     const topics = new Set(rows.map((r) => r.topic));
     const subs = new Set(rows.map((r) => r.k));
     const papers = new Set(rows.map((r) => String(r.paper)));
+    const codes = new Set(rows.map((r) => String(r.code)));
     next.topic = next.topic.filter((t) => topics.has(t));
     next.sub = next.sub.filter((k) => subs.has(k));
     next.paper = next.paper.filter((p) => papers.has(p));
+    next.code = next.code.filter((c) => codes.has(c));
     return next;
   }
 
@@ -447,7 +502,7 @@ export class BankSearchService implements OnModuleInit {
 
   /** How many published parts there are at all (an empty bank shows a different message). */
   private bankSize(): Promise<number> {
-    return this.cached('size', async () => Number((await this.base({ board: null, level: null, course: null, q: '', topic: [], sub: [], yearFrom: null, yearTo: null, paper: [], season: [], type: [], difficulty: [], marks: [] }).clearSelect().count({ n: '*' }).first())?.n ?? 0));
+    return this.cached('size', async () => Number((await this.base({ board: [], level: [], course: [], q: '', topic: [], sub: [], yearFrom: null, yearTo: null, paper: [], code: [], season: [], type: [], difficulty: [], marks: [] }).clearSelect().count({ n: '*' }).first())?.n ?? 0));
   }
 }
 

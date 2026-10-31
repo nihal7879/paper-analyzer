@@ -21,7 +21,8 @@ async function bootstrap() {
   app.useStaticAssets(storage.root, { prefix: '/files', maxAge: '7d', dotfiles: 'deny' });
 
   const port = config.get('API_PORT', { infer: true });
-  await app.listen(port);
+  // Localhost only: on the server nginx sits in front of the API.
+  await app.listen(port, '127.0.0.1');
   console.log(`API on http://localhost:${port}/api  ·  storage: ${storage.root}  ·  AI: ${config.get('AI_PROVIDER', { infer: true })}`);
 }
 await bootstrap();

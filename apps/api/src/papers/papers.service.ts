@@ -1,4 +1,5 @@
 import { BadRequestException, ConflictException, Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { prepareLocalExtraction } from './local-extraction.js';
 import { readdir } from 'node:fs/promises';
 import { z } from 'zod';
 import { EXTRACTION_PROVIDER, type ExtractionProvider } from '../ai/ai.types.js';
@@ -28,6 +29,7 @@ export const uploadFieldsSchema = z.object({
   year: z.coerce.number().int().min(1990).max(2100),
   seasonCode: z.enum(Object.keys(SEASONS) as [SeasonCode, ...SeasonCode[]]),
   paperCode: z.string().trim().regex(/^[A-Za-z0-9]{1,6}$/, 'Paper code: letters/digits only, e.g. 11 or 01'),
+  localExtraction: z.string().max(10_000_000).optional(),
   overwrite: z
     .union([z.boolean(), z.enum(['true', 'false'])])
     .optional()
@@ -116,6 +118,33 @@ export class PapersService {
       }
     }
 
+    // Validate local data and every crop before creating catalog rows, papers or files.
+    let local;
+    if (fields.localExtraction !== undefined) {
+      if (fields.overwrite) throw new BadRequestException('Local uploads cannot overwrite papers');
+      if (!ms) throw new BadRequestException('Local uploads require a mark scheme');
+      try {
+        local = await prepareLocalExtraction(fields.localExtraction, fields, qp.buffer, ms.buffer);
+        const proposedSlug = `${fields.subjectCode.toUpperCase()}_${fields.seasonCode}${String(fields.year).slice(-2)}_${fields.paperCode}`;
+        if (await this.repo.paperExists(proposedSlug) || this.storage.exists(paperKeys(proposedSlug).dir)) {
+          throw new ConflictException(`Paper or storage directory ${proposedSlug} already exists`);
+        }
+        const knownSubject = await this.repo.findSubject(fields.subjectCode.toUpperCase());
+        if (!knownSubject) throw new BadRequestException('Local upload requires an existing subject and catalog');
+        if (knownSubject.board !== local.paper.board || knownSubject.curriculum !== local.paper.curriculum || knownSubject.name !== local.paper.subjectName) {
+          throw new BadRequestException('Local extraction does not match the existing subject catalog');
+        }
+        for (const q of local.questions) if (q.topicCode && !knownSubject.topics.some(t => t.code === q.topicCode)) {
+          throw new BadRequestException(`Unknown topic code for question ${q.number}`);
+        }
+        if (!local.questions.every(q => q.localCrops)) await this.crops.assertLocalCoverage(proposedSlug, qp.buffer, ms.buffer, local.questions);
+      } catch (err) {
+        if (err instanceof ConflictException || err instanceof BadRequestException) throw err;
+        // Never echo an untrusted JSON payload (which could contain credentials).
+        throw new BadRequestException('Local extraction preflight failed: ' + (err instanceof z.ZodError || err instanceof SyntaxError ? 'invalid extraction JSON' : (err as Error).message));
+      }
+    }
+
     const subjectCode = fields.subjectCode.toUpperCase();
     const known = await this.repo.findSubject(subjectCode);
     const subject =
@@ -134,7 +163,7 @@ export class PapersService {
       await this.repo.deletePaper(slug);
     }
     const keys = paperKeys(slug);
-    await this.storage.removeDir(keys.dir);
+    if (!local) await this.storage.removeDir(keys.dir);
 
     // Cambridge codes are paper+variant ("12" = paper 1, variant 2); other boards print the paper number ("01").
     const cambridgeStyle = subject.board.includes('Cambridge') && /^\d{1,2}$/.test(fields.paperCode);
@@ -158,7 +187,13 @@ export class PapersService {
       msPath: ms ? keys.ms : null,
     });
     await this.repo.audit('PAPER_UPLOADED', 'paper', await this.repo.paperDbId(slug), { slug, qp: qp.originalname, ms: ms?.originalname ?? null });
-    await this.enqueue(slug);
+    if (local) {
+      const jobId = await this.repo.createJob(slug);
+      const extraction = local;
+      this.jobs.enqueue(slug, () => this.processing.processLocal(slug, jobId, extraction));
+    } else {
+      await this.enqueue(slug);
+    }
     return { id: slug };
   }
 
@@ -215,9 +250,10 @@ export class PapersService {
     this.invalidateBank();
     await this.repo.audit('PAPER_PUBLISHED', 'paper', await this.repo.paperDbId(slug), { slug });
     // Rebuild vectors + similar-question lists for this subject in the background.
+    // SKIP_SIMILAR_ON_PUBLISH=1 skips it during bulk publishing; run `node dist/cli/refresh-similar.js` afterwards.
     const meta = await this.repo.getMeta(slug);
     const subject = meta ? await this.repo.findSubject(meta.subjectCode) : null;
-    if (subject) {
+    if (subject && process.env.SKIP_SIMILAR_ON_PUBLISH !== '1') {
       this.jobs.enqueue(`similar:${subject.id}`, async () => {
         const r = await this.similarity.refreshSubject(subject.id);
         this.invalidateBank(); // new similar-question lists

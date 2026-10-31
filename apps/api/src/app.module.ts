@@ -12,7 +12,7 @@ import { StorageModule } from './storage/storage.module.js';
 class HealthController {
   @Get()
   health() {
-    return { ok: true };
+    return { ok: true, offline: process.env.PAPER_ANALYZER_OFFLINE === '1' };
   }
 }
 

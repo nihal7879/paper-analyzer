@@ -9,7 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
-import { sourceLine, type PaperMeta, type Question } from "@/lib/api";
+import { paperShort, sourceLine, type PaperMeta, type Question } from "@/lib/api";
 import { baseNumber } from "@/lib/question-bank";
 import { pageImageUrl, type DisplayImage } from "@/lib/review";
 import { difficultyLabel, difficultyStyle, typeLabel } from "@/lib/format";
@@ -62,11 +62,13 @@ export const QuestionCard = memo(function QuestionCard({
   const all = useMemo(() => (parts && parts.length > 1 ? parts : [q]), [parts, q]);
   const ids = useMemo(() => all.map((p) => p.id), [all]);
   const pages = [...new Set(all.flatMap((p) => p.pages))].sort((a, b) => a - b);
-  const totalMarks = all.reduce((n, p) => n + (p.marks ?? 0), 0);
-  const hasMarks = all.some((p) => p.marks != null);
-  const hardest = all.reduce((h, p) => (DIFF_RANK[p.difficulty] > DIFF_RANK[h.difficulty] ? p : h), all[0]).difficulty;
-  const subtopics = [...new Set(all.map((p) => p.subtopic).filter(Boolean))];
   const partial = grouped && !!matched && matched.size > 0 && matched.size < all.length;
+  // With filters matching only some parts, the badges describe those parts (an Easy part of a Medium question says Easy)
+  const shown = partial ? all.filter((p) => matched!.has(p.id)) : all;
+  const totalMarks = shown.reduce((n, p) => n + (p.marks ?? 0), 0);
+  const hasMarks = shown.some((p) => p.marks != null);
+  const hardest = shown.reduce((h, p) => (DIFF_RANK[p.difficulty] > DIFF_RANK[h.difficulty] ? p : h), shown[0]).difficulty;
+  const subtopics = [...new Set(shown.map((p) => p.subtopic).filter(Boolean))];
   // With filters on, "Add to PDF" takes only the parts that match them (a, b or c); otherwise the whole question.
   const pickIds = useMemo(() => (partial ? all.filter((p) => matched!.has(p.id)).map((p) => p.id) : ids), [partial, all, matched, ids]);
 
@@ -125,7 +127,15 @@ export const QuestionCard = memo(function QuestionCard({
                 return (
                   <div key={p.id} className={cn("grid gap-3.5", partial && "-ml-3 border-l-2 pl-3", partial && (hit ? "border-primary" : "border-transparent"))}>
                     {hit && <span className="w-fit rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-medium text-primary">Matches your filters</span>}
-                    <QuestionBody q={p} meta={meta} part label={partLabel(p, all[all.indexOf(p) - 1])} />
+                    {partial && !hit && (
+                      <span className="w-fit rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
+                        Not in your filters · {difficultyLabel(p.difficulty)}
+                        {p.marks != null && ` · ${p.marks} mark${p.marks === 1 ? "" : "s"}`}
+                      </span>
+                    )}
+                    <div className={cn(partial && !hit && "opacity-55")}>
+                      <QuestionBody q={p} meta={meta} part label={partLabel(p, all[all.indexOf(p) - 1])} />
+                    </div>
                   </div>
                 );
               })}
@@ -415,7 +425,7 @@ function SimilarPanel({ list, selectable }: { list: SimilarItem[]; selectable: b
   const i = Math.min(index, list.length - 1);
   const current = list[i];
   const go = (k: number) => setIndex(Math.max(0, Math.min(list.length - 1, k)));
-  const shortSource = (s: SimilarItem) => `${s.meta.seasonName} ${s.meta.year} · Paper ${s.meta.paperCode} · Q${s.question.number}`;
+  const shortSource = (s: SimilarItem) => `${s.meta.seasonName} ${s.meta.year} · ${paperShort(s.meta)} · Q${s.question.number}`;
   const arrow = "flex size-8 items-center justify-center rounded-full border bg-background shadow-xs transition-[opacity,scale] hover:scale-105 active:scale-95 disabled:opacity-35";
 
   return (

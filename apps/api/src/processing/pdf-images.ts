@@ -100,8 +100,11 @@ export function normaliseBox(box: Box): Box | null {
   return { x0, y0, x1, y1 };
 }
 
-/** Crop a normalised box (plus a little padding) out of a page image and encode as WebP. */
-export async function cropToWebp(pageImage: Buffer, box: Box, padding = 0.01): Promise<Buffer> {
+/**
+ * Crop a normalised box (plus a thin white edge) out of a page image and encode as WebP. The edge stays below a line
+ * gap, so text just above or below a carefully placed box doesn't creep back into the picture.
+ */
+export async function cropToWebp(pageImage: Buffer, box: Box, padding = 0.003): Promise<Buffer> {
   const image = sharp(pageImage);
   const { width = 0, height = 0 } = await image.metadata();
   const left = Math.max(0, Math.floor((box.x0 - padding) * width));

@@ -1,0 +1,335 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Initium Library Plan</title>
+<style>
+  /* Lavender theme, same colours as the app (Settings → Colour → Lavender) */
+  :root {
+    --bg: #f3f2fb; --card: #ffffff; --fg: #23212f; --muted: #6b6880; --soft: #ebe9f7; --line: #dedbf0;
+    --primary: #5b4bc4; --primary-soft: #ece9fb; --on-primary: #ffffff;
+    --green: #15803d; --green-soft: #dcfce7; --amber: #b45309; --amber-soft: #fef3c7;
+    --radius: 14px; --shadow: 0 1px 2px rgba(40, 30, 90, .06), 0 8px 24px rgba(40, 30, 90, .06);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #17151f; --card: #201e2b; --fg: #f1f0f6; --muted: #aaa6bf; --soft: #2a2738; --line: #363247;
+      --primary: #a99cf0; --primary-soft: #2e2a45; --on-primary: #1c1736;
+      --green: #4ade80; --green-soft: #173a25; --amber: #fbbf24; --amber-soft: #3b2d10;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #17151f; --card: #201e2b; --fg: #f1f0f6; --muted: #aaa6bf; --soft: #2a2738; --line: #363247;
+    --primary: #a99cf0; --primary-soft: #2e2a45; --on-primary: #1c1736;
+    --green: #4ade80; --green-soft: #173a25; --amber: #fbbf24; --amber-soft: #3b2d10;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 15px/1.55 "Segoe UI", system-ui, -apple-system, sans-serif; }
+  main { max-width: 1040px; margin: 0 auto; padding: 32px 16px 64px; }
+  h1 { font-size: 30px; line-height: 1.2; margin: 0 0 6px; letter-spacing: -.01em; }
+  h2 { font-size: 20px; margin: 0 0 4px; }
+  h3 { font-size: 15px; margin: 0 0 6px; }
+  p { margin: 0 0 10px; }
+  .meta { color: var(--muted); font-size: 13px; margin-bottom: 18px; }
+  .lead { font-size: 17px; max-width: 760px; }
+  section { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow); padding: 22px; margin-top: 18px; }
+  .point { color: var(--muted); margin-bottom: 14px; }
+  .pill { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 12px; font-weight: 600; background: var(--primary-soft); color: var(--primary); }
+  .pill.new { background: var(--amber-soft); color: var(--amber); }
+  .pill.done { background: var(--green-soft); color: var(--green); }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th, td { text-align: left; vertical-align: top; padding: 9px 10px; border-bottom: 1px solid var(--line); }
+  th { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); background: var(--soft); }
+  .scroll { overflow-x: auto; }
+
+  /* structure diagram */
+  .arch { display: grid; gap: 12px; }
+  .box { border: 1.5px solid var(--line); border-radius: 12px; padding: 12px 14px; background: var(--card); }
+  .box.top { border-color: var(--primary); background: var(--primary-soft); text-align: center; font-weight: 700; }
+  .box.ai { border-style: dashed; border-color: var(--primary); }
+  .row3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+  .box ul { margin: 6px 0 0; padding-left: 18px; color: var(--muted); font-size: 13px; }
+  .arrow { text-align: center; color: var(--primary); font-size: 18px; line-height: 1; }
+  .links { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin-top: 4px; font-size: 13px; }
+  .links div { background: var(--soft); border-radius: 10px; padding: 8px 10px; }
+
+  /* flow */
+  .flow { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; counter-reset: s; }
+  .step { position: relative; background: var(--soft); border-radius: 12px; padding: 12px 12px 12px 44px; font-size: 13.5px; }
+  .step::before { counter-increment: s; content: counter(s); position: absolute; left: 12px; top: 12px; width: 22px; height: 22px; border-radius: 50%; background: var(--primary); color: var(--on-primary); font-size: 12px; font-weight: 700; display: grid; place-items: center; }
+  .step b { display: block; margin-bottom: 2px; }
+  .branch { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 10px; font-size: 13.5px; }
+  .branch div { border: 1px dashed var(--line); border-radius: 12px; padding: 10px 12px; }
+
+  /* mock screens */
+  .screens { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; }
+  .screen { border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: var(--bg); }
+  .screen .cap { padding: 8px 12px; font-size: 12.5px; font-weight: 600; background: var(--card); border-bottom: 1px solid var(--line); display: flex; justify-content: space-between; gap: 8px; }
+  .sbody { padding: 12px; display: grid; gap: 8px; font-size: 12px; }
+  .bar { display: flex; align-items: center; gap: 8px; }
+  .logo { width: 22px; height: 22px; border-radius: 6px; background: var(--primary); flex: none; }
+  .ask { flex: 1; background: var(--card); border: 1.5px solid var(--primary); border-radius: 999px; padding: 7px 12px; color: var(--muted); }
+  .ask b { color: var(--primary); }
+  .chip { background: var(--card); border: 1px solid var(--line); border-radius: 999px; padding: 3px 9px; white-space: nowrap; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+  .tile { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 7px 8px; display: flex; align-items: center; gap: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tile i { width: 12px; height: 10px; border-radius: 2px; background: var(--primary); opacity: .55; flex: none; font-style: normal; }
+  .crumb { color: var(--muted); }
+  .crumb b { color: var(--fg); }
+  .group { font-weight: 700; color: var(--primary); margin-top: 2px; }
+  .qcard { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 7px 9px; display: flex; justify-content: space-between; gap: 8px; }
+  .qcard span:last-child { color: var(--primary); font-weight: 600; white-space: nowrap; }
+  .board { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 9px; }
+  .board b { display: block; font-size: 12.5px; }
+  .board span { color: var(--muted); }
+  .drop { border: 2px dashed var(--primary); border-radius: 10px; padding: 14px; text-align: center; color: var(--primary); background: var(--primary-soft); }
+  .fileline { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 7px 9px; display: grid; gap: 4px; }
+  .fileline small { color: var(--muted); }
+
+  /* timeline */
+  .timeline { display: grid; grid-template-columns: 120px repeat(15, 1fr); gap: 4px 2px; align-items: center; font-size: 12.5px; }
+  .timeline .wk { text-align: center; color: var(--muted); font-size: 11px; }
+  .timeline .lbl { font-weight: 600; padding-right: 6px; }
+  .seg { height: 26px; border-radius: 7px; background: var(--primary); color: var(--on-primary); font-size: 11.5px; font-weight: 600; display: flex; align-items: center; padding: 0 8px; white-space: nowrap; overflow: hidden; }
+  .seg.alt { background: var(--primary-soft); color: var(--primary); border: 1px solid var(--primary); }
+  .gate { grid-column: 1 / -1; font-size: 12.5px; color: var(--muted); margin-top: 8px; }
+
+  .todo { list-style: none; padding: 0; margin: 0; display: grid; gap: 8px; }
+  .todo li { display: flex; gap: 10px; align-items: flex-start; background: var(--soft); border-radius: 10px; padding: 10px 12px; }
+  .todo li::before { content: ""; width: 16px; height: 16px; border: 2px solid var(--primary); border-radius: 4px; flex: none; margin-top: 2px; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .kpi { background: var(--soft); border-radius: 12px; padding: 12px 14px; }
+  .kpi b { display: block; font-size: 22px; color: var(--primary); }
+  .kpi span { color: var(--muted); font-size: 13px; }
+
+  @media (max-width: 760px) {
+    h1 { font-size: 24px; }
+    section { padding: 16px; }
+    .row3, .flow, .screens, .links, .branch, .grid2 { grid-template-columns: 1fr; }
+    .tiles { grid-template-columns: repeat(2, 1fr); }
+    .timeline { grid-template-columns: 84px repeat(15, minmax(14px, 1fr)); font-size: 11px; }
+    .seg { font-size: 0; padding: 0; }
+  }
+  @media print { body { background: #fff; } section { box-shadow: none; break-inside: avoid; } }
+</style>
+</head>
+<body>
+<main>
+  <h1>Initium Digital Library — Plan</h1>
+  <div class="meta">13 October 2026 · Paper Analyzer team</div>
+  <p class="lead">Initium Library puts every teaching file and every past-paper question in one place, searchable across boards and levels. Our existing Paper Analyzer becomes its question engine. It is built in <b>5 phases over about 3 weeks</b>, and each phase is usable on its own.</p>
+
+  <!-- 1. structure -->
+  <section>
+    <h2>1. Structure</h2>
+    <p class="point">The Library is the product; Paper Analyzer is one module inside it, and Ask AI searches both.</p>
+    <div class="arch">
+      <div class="box top">Initium Institute — Digital Library · one website, one login, lavender theme</div>
+      <div class="box ai"><h3>Ask AI <span class="pill new">New</span></h3>One search bar for teachers: “projectile motion, AS level, medium” → questions and files from every board, grouped by board and level.</div>
+      <div class="arrow">↓ searches ↓</div>
+      <div class="row3">
+        <div class="box"><h3>Library — files <span class="pill new">New</span></h3>Folders like Google Drive
+          <ul><li>Board › Level › Subject</li><li>Syllabus, Notes, Textbooks</li><li>Past Papers, Mock Papers</li><li>Revision Notes, Worksheets</li></ul></div>
+        <div class="box"><h3>Paper Analyzer <span class="pill done">Built</span></h3>Past papers → questions
+          <ul><li>Questions, answers, topics</li><li>Common topics across boards</li><li>Similar questions</li><li>Worksheet PDF maker</li></ul></div>
+        <div class="box"><h3>Admin <span class="pill">Extend</span></h3>Runs the library
+          <ul><li>Review AI uploads, publish</li><li>Users and roles</li><li>Settings, AI keys</li><li>Backups and history</li></ul></div>
+      </div>
+      <div class="links">
+        <div><b>Past Papers folder</b> → each paper has “Open questions” (Paper Analyzer)</div>
+        <div><b>Question Bank folder</b> → the Questions page, filtered to that subject</div>
+        <div><b>Worksheets folder</b> ← PDFs made in Paper Analyzer are saved here</div>
+        <div><b>Upload</b> → a past paper goes to Paper Analyzer; other files stay as files</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 2. have vs new -->
+  <section>
+    <h2>2. What we already have vs what is new</h2>
+    <p class="point">About half of the library already runs today; the new work is files, smart upload, Ask AI and roles.</p>
+    <div class="scroll"><table>
+      <tr><th>Area</th><th>Already built</th><th>New for the library</th></tr>
+      <tr><td><b>Content</b></td><td>31 published papers: Edexcel AS Physics 8PH0 (10), Edexcel IAL Maths M1 (21) — 720 question parts with answers and worksheet crops</td><td>Files of any kind: notes, textbooks, syllabus, mock papers, revision notes</td></tr>
+      <tr><td><b>Organisation</b></td><td>Board, Level (AS / A Level / IAL), Subject across boards; 35 common topics linked to each syllabus</td><td>Folder tree for files: Board › Level › Subject › folder</td></tr>
+      <tr><td><b>Upload</b></td><td>Past-paper upload, AI reading, review and publish</td><td>Upload any file; AI suggests type, board, level, subject, year and folder</td></tr>
+      <tr><td><b>Search</b></td><td>Filters, text search, common-topic filter, results grouped by board and level, similar questions</td><td>Ask AI bar: one sentence searches questions and files together</td></tr>
+      <tr><td><b>Output</b></td><td>Worksheet PDF (normal and past-paper style, with mark-scheme crops)</td><td>Save worksheets into the library; share with a class</td></tr>
+      <tr><td><b>People</b></td><td>One admin login</td><td>Roles: admin, teacher, student</td></tr>
+    </table></div>
+  </section>
+
+  <!-- 3. flow -->
+  <section>
+    <h2>3. How content flows</h2>
+    <p class="point">Every upload goes through one door; the AI sorts it, an admin confirms, and it becomes searchable.</p>
+    <div class="flow">
+      <div class="step"><b>Upload</b>Teacher or admin drops one or many files.</div>
+      <div class="step"><b>AI sorts</b>Reads the first page: type, board, level, subject, year, folder.</div>
+      <div class="step"><b>Admin confirms</b>One click to accept, or change the folder.</div>
+      <div class="step"><b>Saved</b>Goes to its folder; past papers go on to step 5.</div>
+      <div class="step"><b>Questions</b>Paper Analyzer splits QP + MS into questions, answers, topics, crops.</div>
+      <div class="step"><b>Review &amp; publish</b>Admin checks, fixes, publishes.</div>
+      <div class="step"><b>Find</b>Teachers browse folders or Ask AI.</div>
+      <div class="step"><b>Worksheet</b>Pick questions → PDF → saved to Worksheets.</div>
+    </div>
+    <div class="branch">
+      <div><b>Notes, textbook, syllabus</b> → stored and searchable by name, tags and text; no question splitting.</div>
+      <div><b>Past paper (QP + MS)</b> → full Paper Analyzer pipeline, then appears in Question Bank and Ask AI.</div>
+    </div>
+  </section>
+
+  <!-- 4. ask ai -->
+  <section>
+    <h2>4. Ask AI search</h2>
+    <p class="point">A teacher types a sentence; it becomes topic + level + difficulty and runs on what we already store, so most searches cost nothing.</p>
+    <div class="grid2">
+      <div>
+        <h3>Example: “projectile motion questions for AS, medium”</h3>
+        <ol style="margin:0;padding-left:20px">
+          <li>Understand: common topic = <b>Projectile motion</b>, level = <b>AS Level</b>, difficulty = <b>Medium</b> (a small AI call, about $0.01 or less).</li>
+          <li>Match across boards through the common topics: Edexcel 8PH0 “2.5 Projectile motion”, A Level Maths “7.5 Projectiles”, Cambridge 9702 kinematics.</li>
+          <li>Add files whose names, tags or text match (notes, worksheets).</li>
+          <li>Show results grouped by board and level, with “Add to worksheet”.</li>
+          <li>Refine by asking again: “only 2020 onwards”, “make it 30 marks”.</li>
+        </ol>
+      </div>
+      <div>
+        <h3>What it reuses (already built)</h3>
+        <table>
+          <tr><td>Common topics + links per syllabus</td><td><span class="pill done">Built</span></td></tr>
+          <tr><td>General level filter (AS / A / IAL)</td><td><span class="pill done">Built</span></td></tr>
+          <tr><td>Subject across boards</td><td><span class="pill done">Built</span></td></tr>
+          <tr><td>Grouped by board &amp; level</td><td><span class="pill done">Built</span></td></tr>
+          <tr><td>Similar-question vectors (free local model)</td><td><span class="pill done">Built</span></td></tr>
+          <tr><td>Sentence → filters</td><td><span class="pill new">New</span></td></tr>
+          <tr><td>File search (names, tags, text)</td><td><span class="pill new">New</span></td></tr>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- 5. screens -->
+  <section>
+    <h2>5. Screens</h2>
+    <p class="point">Eight screens in the current lavender theme: four new, four built or extended. Mock-ups of the new ones:</p>
+    <div class="screens">
+      <div class="screen">
+        <div class="cap"><span>1 · Library home</span><span class="pill new">New</span></div>
+        <div class="sbody">
+          <div class="bar"><span class="logo"></span><div class="ask">✦ <b>Ask AI</b> — e.g. projectile motion, AS, medium</div></div>
+          <div class="tiles" style="grid-template-columns:repeat(3,1fr)">
+            <div class="board"><b>Pearson Edexcel</b><span>AS · IAL · A Level</span></div>
+            <div class="board"><b>Cambridge</b><span>AS &amp; A Level</span></div>
+            <div class="board"><b>IB</b><span>later</span></div>
+          </div>
+          <div class="crumb">Recent</div>
+          <div class="qcard"><span>M1 January 2026 — paper + mark scheme</span><span>Open</span></div>
+          <div class="qcard"><span>Momentum worksheet (12 questions)</span><span>Open</span></div>
+        </div>
+      </div>
+      <div class="screen">
+        <div class="cap"><span>2 · Folder view (like Drive)</span><span class="pill new">New</span></div>
+        <div class="sbody">
+          <div class="crumb">Library › Edexcel › AS Level › <b>Physics</b></div>
+          <div class="chips"><span class="chip">Type ▾</span><span class="chip">Year ▾</span><span class="chip">Modified ▾</span><span class="chip">▦ Grid</span></div>
+          <div class="tiles">
+            <div class="tile"><i></i>Syllabus</div><div class="tile"><i></i>Notes</div><div class="tile"><i></i>Textbooks</div>
+            <div class="tile"><i></i>Past Papers</div><div class="tile"><i></i>Question Bank</div><div class="tile"><i></i>Topical Qs</div>
+            <div class="tile"><i></i>Mock Papers</div><div class="tile"><i></i>Revision</div><div class="tile"><i></i>Worksheets</div>
+          </div>
+        </div>
+      </div>
+      <div class="screen">
+        <div class="cap"><span>4 · Ask AI results</span><span class="pill new">New</span></div>
+        <div class="sbody">
+          <div class="ask">✦ projectile motion, AS, medium</div>
+          <div class="chips"><span class="chip">AS Level ✕</span><span class="chip">Medium ✕</span><span class="chip">+ Board</span><span class="chip">+ Year</span></div>
+          <div class="group">Edexcel UK · AS Level — 10 questions</div>
+          <div class="qcard"><span>Physics May/June 2024 · Q8 — ball kicked at 30°</span><span>+ Add</span></div>
+          <div class="group">Cambridge · AS Level — when papers are added</div>
+          <div class="group">Files — 2</div>
+          <div class="qcard"><span>Projectiles notes.pdf</span><span>Open</span></div>
+        </div>
+      </div>
+      <div class="screen">
+        <div class="cap"><span>7 · Smart upload</span><span class="pill new">New</span></div>
+        <div class="sbody">
+          <div class="drop">Drop files here — PDFs, Word, images</div>
+          <div class="fileline"><b>Oct 2025 M1.pdf</b><small>AI: Past paper · Edexcel · IAL · Maths M1 · Oct 2025 → Past Papers</small></div>
+          <div class="fileline"><b>Forces notes.pdf</b><small>AI: Notes · Edexcel · AS · Physics → Notes</small></div>
+          <div class="bar"><span class="chip">Change folder</span><span class="chip" style="background:var(--primary);color:var(--on-primary);border-color:var(--primary)">Confirm all</span></div>
+        </div>
+      </div>
+    </div>
+    <div class="scroll" style="margin-top:14px"><table>
+      <tr><th>#</th><th>Screen</th><th>What is on it</th><th>Status</th></tr>
+      <tr><td>1</td><td>Library home</td><td>Ask AI bar, board cards, recent files</td><td><span class="pill new">New</span></td></tr>
+      <tr><td>2</td><td>Folder view</td><td>Breadcrumb, grid or list, folder tiles, filters</td><td><span class="pill new">New</span></td></tr>
+      <tr><td>3</td><td>File preview</td><td>PDF preview, details, download, “Find questions from this”</td><td><span class="pill new">New</span></td></tr>
+      <tr><td>4</td><td>Ask AI results</td><td>Questions and files grouped by board and level</td><td><span class="pill new">New</span></td></tr>
+      <tr><td>5</td><td>Question Bank</td><td>Today's Questions page with all filters</td><td><span class="pill done">Built</span></td></tr>
+      <tr><td>6</td><td>Worksheet builder</td><td>Selected questions, order, marks, PDF + “Save to library”</td><td><span class="pill">Extend</span></td></tr>
+      <tr><td>7</td><td>Smart upload</td><td>Any file, AI suggests folder, confirm all</td><td><span class="pill">Extend</span></td></tr>
+      <tr><td>8</td><td>Admin</td><td>Papers, review, settings + users and roles</td><td><span class="pill">Extend</span></td></tr>
+    </table></div>
+  </section>
+
+  <!-- 6. data -->
+  <section>
+    <h2>6. Data and storage</h2>
+    <p class="point">Three new tables and one new storage folder; everything already stored stays as it is.</p>
+    <div class="scroll"><table>
+      <tr><th>New</th><th>Holds</th><th>Notes</th></tr>
+      <tr><td><b>library_folders</b></td><td>Board, level, subject, folder type, parent folder</td><td>Uses the existing boards / levels / subjects</td></tr>
+      <tr><td><b>library_files</b></td><td>Name, folder, file path, type, year, topic tags, uploaded by, text for search</td><td>A past paper links to its row in <code>papers</code></td></tr>
+      <tr><td><b>users</b> (+ roles)</td><td>Admin, teacher, student; who sees what</td><td>Students see published items only</td></tr>
+      <tr><td><b>library/</b> folder</td><td><code>D:/paper-analyzer-storage/library/&lt;board&gt;/&lt;level&gt;/&lt;subject&gt;/…</code></td><td>Next to today's <code>papers/</code></td></tr>
+    </table></div>
+    <p style="margin-top:10px;color:var(--muted);font-size:13px">Rule kept from today: every paper has one unique subject code + paper code (e.g. IB papers get our own codes and a time-zone suffix).</p>
+  </section>
+
+  <!-- 7. timeline -->
+  <section>
+    <h2>7. Phases</h2>
+    <p class="point">Five phases, about 15 working days; each ends with something teachers can use.</p>
+    <div class="scroll"><div class="timeline" style="min-width:640px">
+      <div></div>
+      <div class="wk">1</div><div class="wk">2</div><div class="wk">3</div><div class="wk">4</div><div class="wk">5</div><div class="wk">6</div><div class="wk">7</div><div class="wk">8</div><div class="wk">9</div><div class="wk">10</div><div class="wk">11</div><div class="wk">12</div><div class="wk">13</div><div class="wk">14</div><div class="wk">15</div>
+      <div class="lbl">1 Folders &amp; files</div><div class="seg" style="grid-column:2 / span 4">Folders, home, folder view</div><div style="grid-column:6 / span 11"></div>
+      <div class="lbl">2 Link Analyzer</div><div style="grid-column:2 / span 4"></div><div class="seg" style="grid-column:6 / span 2">Link papers</div><div style="grid-column:8 / span 9"></div>
+      <div class="lbl">3 Smart upload</div><div style="grid-column:2 / span 6"></div><div class="seg" style="grid-column:8 / span 3">AI sorts any file</div><div style="grid-column:11 / span 6"></div>
+      <div class="lbl">4 Ask AI</div><div style="grid-column:2 / span 9"></div><div class="seg" style="grid-column:11 / span 3">Sentence → filters + files</div><div style="grid-column:14 / span 3"></div>
+      <div class="lbl">5 Users &amp; roles</div><div style="grid-column:2 / span 11"></div><div class="seg alt" style="grid-column:13 / span 4">Teacher / student logins</div>
+      <div class="gate">Gate after each phase: Initium tries it and says yes before the next one starts. Day numbers are working days.</div>
+    </div></div>
+  </section>
+
+  <!-- 8. cost -->
+  <section>
+    <h2>8. Running cost</h2>
+    <p class="point">Reading papers with Claude Code on the Max plan costs nothing extra; the API key is kept for later automatic use.</p>
+    <div class="grid2">
+      <div class="kpi"><b>$0 extra</b><span>Papers read with Claude Code (Max plan), as done for the 21 M1 papers and their crops</span></div>
+      <div class="kpi"><b>≈ $1.2–1.6 / paper</b><span>If the app reads papers itself with the API key (automatic, no one at the keyboard)</span></div>
+      <div class="kpi"><b>≈ $0.01 / search</b><span>Ask AI understanding a sentence; plain filter and topic searches are free</span></div>
+      <div class="kpi"><b>$0</b><span>Similar questions and topic matching (free local model on the server)</span></div>
+    </div>
+  </section>
+
+  <!-- 9. decisions -->
+  <section>
+    <h2>9. Decisions needed from Initium</h2>
+    <ul class="todo">
+      <li>Which boards and versions do your students sit (e.g. Edexcel IAL Physics WPH11, Cambridge 9702)? We collect papers for exactly those.</li>
+      <li>Folder list per subject: keep Syllabus, Notes, Textbooks, Past Papers, Question Bank, Topical Questions, Mock Papers, Revision, Worksheets?</li>
+      <li>Who uses it: teachers only, or students too (published items only)?</li>
+      <li>IAL units such as Maths M1: show under “International A Level”, or also under “AS Level”?</li>
+      <li>Start with Phase 1 (folders and files)?</li>
+    </ul>
+  </section>
+</main>
+</body>
+</html>

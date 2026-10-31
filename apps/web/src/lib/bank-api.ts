@@ -52,8 +52,6 @@ function toGroup(item: PageItem): ListGroup {
 
 const paramsOf = (f: Filters, sort: SortKey = "newest", extra: Record<string, string> = {}) => {
   const p = filtersToParams(f, sort);
-  // the URL keeps "subject" remembered in the browser only; the server always needs the course
-  if (f.course) p.set("course", f.course);
   for (const [k, v] of Object.entries(extra)) p.set(k, v);
   return p;
 };
@@ -97,6 +95,7 @@ export const EMPTY_FACETS: Facets = {
   yearBounds: null,
   yearCounts: new Map(),
   papers: [],
+  codes: [],
   seasons: [],
   types: [],
   difficulties: [],

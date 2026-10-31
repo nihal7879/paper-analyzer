@@ -294,7 +294,7 @@ function UploadForm() {
               <Collapse open={editing}>
                 <div className="grid gap-4 border-t pt-4 sm:grid-cols-2">
                   <Field label="Exam board" id="board">
-                    <Input id="board" value={draft.board} onChange={(e) => edit("board", e.target.value)} placeholder="e.g. Pearson Edexcel" />
+                    <Input id="board" value={draft.board} onChange={(e) => edit("board", e.target.value)} placeholder="e.g. Edexcel or AQA" />
                   </Field>
                   <Field label="Curriculum / level" id="curriculum">
                     <Input id="curriculum" value={draft.curriculum} onChange={(e) => edit("curriculum", e.target.value)} placeholder="e.g. Edexcel AS Level" />

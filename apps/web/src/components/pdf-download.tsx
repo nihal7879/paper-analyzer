@@ -18,7 +18,7 @@ const PICKED = "bg-primary text-primary-foreground shadow-sm hover:text-primary-
 
 /** The teacher chooses each time: no answers, answers at the end of the worksheet, or a separate answer sheet. */
 type AnswerChoice = "none" | "end" | "separate";
-const ANSWER_OPTIONS: { value: AnswerChoice; label: React.ReactNode }[] = [
+const ANSWER_OPTIONS: { value: AnswerChoice; label: React.ReactNode; activeClassName?: string }[] = [
   { value: "none", label: "No answers", activeClassName: PICKED },
   { value: "end", label: <><span className="lg:hidden">At the end</span><span className="hidden lg:inline">Answers at end</span></>, activeClassName: PICKED },
   { value: "separate", label: <><span className="lg:hidden">Separate</span><span className="hidden lg:inline">Separate answer sheet</span></>, activeClassName: PICKED },

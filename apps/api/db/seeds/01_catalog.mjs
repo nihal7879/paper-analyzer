@@ -82,7 +82,7 @@ const CATALOG = [
     ],
   },
   {
-    board: { code: 'EDEXCEL', name: 'Pearson Edexcel', short_name: 'Edexcel' },
+    board: { code: 'EDEXCEL', name: 'Edexcel', short_name: 'Edexcel' },
     curriculum: { name: 'Edexcel AS Level', level: 'AS Level' },
     subjects: [
       {

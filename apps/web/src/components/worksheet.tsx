@@ -22,6 +22,13 @@ const LEFT_MARGIN_MM = 10;
 /** Where Edexcel prints the bold question number (fraction of the page width). */
 const NUMBER_X = 0.075;
 const PAGE_H_MM = 297;
+/** Room for one question block on a worksheet page (page minus margins, border and the line under it), the Total + Source lines, and the most that may be taken off the last writing area. */
+const FIT_MM = 252;
+const TAIL_MM = 16;
+/** A question up to this much too tall for one page loses whole writing lines at the end; taller ones continue on the next page. */
+const TRIM_OK_MM = 45;
+/** Height of one slice of a long writing area (about four ruled lines). */
+const SLICE_MM = 36;
 /** Digit height / font size for the serif number (Times bold), and where the digit top sits in a line-height:1 box. */
 const DIGIT_H = 0.66;
 const DIGIT_TOP = 0.2;
@@ -75,7 +82,6 @@ export function Worksheet({ items, title, answers, typed = false, part }: { item
   // answer pages are always portrait like the question pages (past-paper rows are scaled to the page width)
   const msLandscape = false;
   const total = questions.reduce((s, q) => s + q.marks, 0);
-  const subjects = [...new Set(items.map((e) => `${e.meta.board} ${e.meta.curriculum.split(/\s+/).filter((w) => !e.meta.board.split(/\s+/).includes(w)).join(" ")} ${e.meta.subjectName}`.replace(/\s+/g, " ").trim()))];
 
   return (
     <div className={msLandscape ? "ws-doc ws-landscape" : answers === "only" || part === "cover" ? "ws-doc ws-plain" : "ws-doc"}>
@@ -256,24 +262,81 @@ function QuestionBlock({ q, n, typed }: { q: WholeQuestion; n: number; typed: bo
     </>
   );
   const crops = q.parts.flatMap((p) => (p.question.crops ?? []).filter((c) => c.path).map((c, k) => ({ p, c, k })));
+  // The writing space is kept as printed. If the question is only a few lines too tall for one worksheet page, whole
+  // ruled lines are taken off the very end so it stays on one page like the paper (no nearly empty page after it).
+  // If it is taller than that (a question that fills several pages of the paper), the ruled lines carry on at the top
+  // of the next page instead, so no space is lost and no page is left blank above.
+  const lastCrop = crops[crops.length - 1]?.c;
+  const lastMm = lastCrop ? (lastCrop.box.y1 - lastCrop.box.y0) * PAGE_H_MM : 0;
+  const totalMm = crops.reduce((sum, { c }) => sum + (c.box.y1 - c.box.y0) * PAGE_H_MM, 0) + TAIL_MM;
+  const onePaperPage = crops.length > 0 && crops.every(({ c }) => c.page === crops[0].c.page);
+  // one page of the paper: the whole question has to fit one worksheet page; several pages: each earlier page is a page of its own, so only the last one (with the Total lines) is checked
+  const overflowMm = onePaperPage ? totalMm - FIT_MM : lastMm + TAIL_MM - FIT_MM;
+  const pitchMm = lastCrop?.box.rules ? lastCrop.box.rules.pitch * lastMm : 0;
+  const trimMm = pitchMm > 0 && overflowMm > 0 && overflowMm <= TRIM_OK_MM ? Math.ceil(overflowMm / pitchMm) * pitchMm : 0;
+  const splitLast = !!lastCrop?.box.rules && trimMm === 0 && overflowMm > 0;
   return (
     <section className="ws-q">
       {cropped ? (
         // A question may run over pages between its crops (no half-empty pages); the number rides on the first
         // crop and the Total line on the last one, so neither is ever left alone on a page.
         crops.map(({ p, c, k }, i) => (
-          <div key={`${p.question.id}-${k}`} className={i === 0 ? "ws-first" : "ws-keep"}>
+          <div
+            key={`${p.question.id}-${k}`}
+            className={i === 0 ? "ws-first" : "ws-keep"}
+            style={{ position: "relative", ...(i === crops.length - 1 && splitLast ? { breakInside: "auto" as const } : {}) }}
+          >
+            {c.box.qmark &&
+              // the "Q6" box is at the foot of the page: not shown when that part of the picture is cut off (trimmed) or runs over onto the next page
+              !(i === crops.length - 1 && (splitLast || (trimMm > 0 && (c.box.qmark.base - c.box.y0) * PAGE_H_MM > lastMm - trimMm - 1))) && (
+              <span
+                className="ws-cont"
+                style={{
+                  left: `calc(${c.box.qmark.x} * ${PAGE_MM}mm - ${LEFT_MARGIN_MM}mm)`,
+                  top: `${((c.box.qmark.base - c.box.y0) * PAGE_H_MM - 0.84 * c.box.qmark.em * PAGE_H_MM).toFixed(2)}mm`,
+                  fontSize: `${(c.box.qmark.em * PAGE_H_MM).toFixed(2)}mm`,
+                }}
+              >
+                Q{n}
+              </span>
+            )}
+            {/* the paper's own "Question 6 continued" was cleared from the picture: ours, with our number */}
+            {c.box.cont && (
+              <span
+                className="ws-cont"
+                style={{
+                  left: `calc(${c.box.cont.x} * ${PAGE_MM}mm - ${LEFT_MARGIN_MM}mm)`,
+                  top: `${((c.box.cont.base - c.box.y0) * PAGE_H_MM - 0.84 * c.box.cont.em * PAGE_H_MM).toFixed(2)}mm`,
+                  fontSize: `${(c.box.cont.em * PAGE_H_MM).toFixed(2)}mm`,
+                }}
+              >
+                Question {n} continued
+              </span>
+            )}
             {i === 0 && (
               <span className="ws-num" style={numberStyle(q)}>
                 {n}
               </span>
             )}
-            <img
-              className="ws-crop"
-              src={fileUrl(c.path!)}
-              alt={`Question ${n}, part ${p.question.number}`}
-              style={{ marginLeft: `calc(${c.box.x0} * ${PAGE_MM}mm - ${LEFT_MARGIN_MM}mm)`, width: `calc(${c.box.x1 - c.box.x0} * ${PAGE_MM}mm)` }}
-            />
+            {i === crops.length - 1 && splitLast ? (
+              <SplitCrop c={c} alt={`Question ${n}, part ${p.question.number}`} />
+            ) : i === crops.length - 1 && trimMm > 0 ? (
+              <div style={{ height: `${(lastMm - trimMm).toFixed(2)}mm`, overflow: "hidden" }}>
+                <img
+                  className="ws-crop"
+                  src={fileUrl(c.path!)}
+                  alt={`Question ${n}, part ${p.question.number}`}
+                  style={{ marginLeft: `calc(${c.box.x0} * ${PAGE_MM}mm - ${LEFT_MARGIN_MM}mm)`, width: `calc(${c.box.x1 - c.box.x0} * ${PAGE_MM}mm)` }}
+                />
+              </div>
+            ) : (
+              <img
+                className="ws-crop"
+                src={fileUrl(c.path!)}
+                alt={`Question ${n}, part ${p.question.number}`}
+                style={{ marginLeft: `calc(${c.box.x0} * ${PAGE_MM}mm - ${LEFT_MARGIN_MM}mm)`, width: `calc(${c.box.x1 - c.box.x0} * ${PAGE_MM}mm)` }}
+              />
+            )}
             {i === crops.length - 1 && tail}
           </div>
         ))
@@ -282,6 +345,32 @@ function QuestionBlock({ q, n, typed }: { q: WholeQuestion; n: number; typed: bo
         <TypedQuestion q={q} n={n} tail={tail} />
       )}
     </section>
+  );
+}
+
+/**
+ * A crop cut into slices between two writing lines (about 4 lines each), so the page can end after any slice and the
+ * rest continues on the next page. The slices touch each other, so on one page it looks like the single picture.
+ */
+function SplitCrop({ c, alt }: { c: NonNullable<BankEntry["question"]["crops"]>[number]; alt: string }) {
+  const rules = c.box.rules!;
+  const hMm = (c.box.y1 - c.box.y0) * PAGE_H_MM;
+  const pitch = rules.pitch * hMm;
+  const per = Math.max(1, Math.round(SLICE_MM / pitch)) * pitch;
+  // the first slice holds the text and the first line (cut half a line below it); the others are whole lines
+  const cuts = [0, (rules.from + rules.pitch / 2) * hMm];
+  while (cuts[cuts.length - 1] + per < hMm - pitch) cuts.push(cuts[cuts.length - 1] + per);
+  cuts.push(hMm);
+  const left = `calc(${c.box.x0} * ${PAGE_MM}mm - ${LEFT_MARGIN_MM}mm)`;
+  const width = `calc(${c.box.x1 - c.box.x0} * ${PAGE_MM}mm)`;
+  return (
+    <>
+      {cuts.slice(0, -1).map((start, i) => (
+        <div key={i} style={{ height: `${(cuts[i + 1] - start).toFixed(2)}mm`, overflow: "hidden", breakInside: "avoid", marginLeft: left, width }}>
+          <img className="ws-crop" src={fileUrl(c.path!)} alt={i === 0 ? alt : ""} style={{ width, marginTop: `${(-start).toFixed(2)}mm` }} />
+        </div>
+      ))}
+    </>
   );
 }
 
@@ -443,6 +532,9 @@ function MarkScheme({ questions, startAt = 1 }: { questions: WholeQuestion[]; st
   );
 }
 
+/** Size of the question / part labels written over the mark scheme (fraction of the page height): one size for every paper. */
+const LABEL_EM = 0.0145;
+
 /** Widest a mark-scheme crop may be on a portrait worksheet page (the answers then shrink to fit). */
 const PORTRAIT_MS_MM = 180;
 
@@ -472,23 +564,55 @@ function MarkSchemeCrops({ questions, landscape }: { questions: WholeQuestion[];
                 .filter((c) => c.path)
                 .map((c, k) => {
                   const b = c.box;
-                  const num = k === 0 ? b.num : undefined;
-                  const label = `${n}${partLabel(p.question.number, q.base).replace(/\s+/g, "")}`;
+                  const num = b.labels ? undefined : b.num; // older crops: one measured number; newer ones carry every cleared label
+                  // the paper printed just "3" above a separate "(a)" row: our number replaces only that, or "(a)" would show twice
+                  const digitsOnly = num?.t != null && /^\*?\d{1,2}\.?$/.test(num.t.trim());
+                  const label = digitsOnly ? `${n}${num!.t!.trim().endsWith(".") ? "." : ""}` : `${n}${partLabel(p.question.number, q.base).replace(/\s+/g, "")}`;
                   // a label with brackets measures bracket-top to bracket-bottom (~0.92 of the font size); digits ~0.66
                   const paren = label.includes("(");
-                  const size = num ? (num.h * ph * scale) / (paren ? 0.92 : DIGIT_H) : 0;
+                  // the measured ink can include a bit of the table rule next to the number: no taller than a real digit / bracket
+                  const inkH = num ? Math.min(num.h, paren ? 0.0125 : 0.011) : 0; // fits the table row, like the paper's own 11pt bold
+                  const size = num ? (inkH * ph * scale) / (paren ? 0.92 : DIGIT_H) : 0;
                   const lastRow = pi === q.parts.length - 1 && k === (p.question.msCrops ?? []).filter((x) => x.path).length - 1;
                   return (
                     <div key={`${p.question.id}-${k}`} className="ws-msq-row" style={{ marginLeft: left }}>
                       {pi === 0 && k === 0 && b.head && <img className="ws-crop" src={fileUrl(b.head)} alt="" style={{ width: width(b) }} />}
                       <div className="ws-msq-cell">
                         <img className="ws-crop" src={fileUrl(c.path!)} alt={`Mark scheme for question ${n} ${p.question.number}`} style={{ width: width(b) }} />
+                        {b.labels?.map((l, li) => (
+                          <span
+                            key={`l${li}`}
+                            className="ws-msq-num"
+                            style={{
+                              left: mm((l.x - b.x0) * pw * scale),
+                              top: mm((l.base - b.y0) * ph * scale - 0.84 * LABEL_EM * ph * scale),
+                              fontSize: mm(LABEL_EM * ph * scale),
+                            }}
+                          >
+                            {l.q ? `${n}${l.t.replace(/^\*?\d{1,2}\.?/, (d) => (d.endsWith(".") ? "." : ""))}` : l.t}
+                          </span>
+                        ))}
+                        {num &&
+                          (num.more ?? []).map((m, mi) => (
+                            <span
+                              key={`m${mi}`}
+                              className="ws-msq-num"
+                              style={{
+                                left: mm((m.x - b.x0) * pw * scale),
+                                top: mm(Math.max(0.3, (m.y + m.h - inkH - b.y0) * ph * scale - (paren ? 0.08 : DIGIT_TOP) * size)),
+                                fontSize: mm(size),
+                              }}
+                            >
+                              {`${n}${m.t.trim().replace(/^\*?\d{1,2}\.?/, (d) => (d.endsWith(".") ? "." : ""))}`}
+                            </span>
+                          ))}
                         {num && (
                           <span
                             className="ws-msq-num"
                             style={{
                               left: mm((num.x - b.x0) * pw * scale),
-                              top: mm((num.y - b.y0) * ph * scale - (paren ? 0.08 : DIGIT_TOP) * size),
+                              // anchored on the ink's bottom edge (a rule above it can inflate the box); never above the crop
+                              top: mm(Math.max(0.3, (num.y + num.h - inkH - b.y0) * ph * scale - (paren ? 0.08 : DIGIT_TOP) * size)),
                               fontSize: mm(size),
                             }}
                           >
@@ -576,6 +700,7 @@ const WORKSHEET_CSS = `
 .ws-cover li::before { content: ""; position: absolute; left: 0.5mm; top: 1.6mm; width: 2.4mm; height: 2.4mm; border-radius: 50%; background: #1a1a1a; }
 .ws-cover i { font-style: italic; }
 .ws-q { margin-right: 5mm; margin-bottom: 4mm; }
+.ws-cont { position: absolute; z-index: 1; font-family: "Times New Roman", Times, serif; font-weight: 700; line-height: 1; white-space: nowrap; }
 .ws-first { position: relative; break-inside: avoid; }
 .ws-keep { break-inside: avoid; }
 /* the rule under each question starts at the number column, inside the page border (like the paper) */

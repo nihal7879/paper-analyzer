@@ -57,9 +57,10 @@ export interface Question {
   /** path = cropped image file; null = crop the page image on the fly. */
   images: { path: string | null; page: number; box: { x0: number; y0: number; x1: number; y1: number } }[];
   /** The whole question part cut from the paper (one per page), for worksheets that look like the real paper. */
-  crops?: { path: string | null; page: number; box: { x0: number; y0: number; x1: number; y1: number; num?: { x: number; y: number; h: number } } }[];
+  crops?: { path: string | null; page: number; box: { x0: number; y0: number; x1: number; y1: number; rules?: { from: number; pitch: number }; cont?: { x: number; base: number; em: number }; qmark?: { x: number; base: number; em: number }; num?: { x: number; y: number; h: number; t?: string; more?: { x: number; y: number; h: number; t: string }[] } } }[];
   /** The part's rows cut from the mark scheme (head = the table's grey header row, on the first crop). */
-  msCrops?: { path: string | null; page: number; box: { x0: number; y0: number; x1: number; y1: number; head?: string; num?: { x: number; y: number; h: number } } }[];
+  /** pw / ph: the mark-scheme page size in mm (landscape A4 when missing). */
+  msCrops?: { path: string | null; page: number; box: { x0: number; y0: number; x1: number; y1: number; pw?: number; ph?: number; head?: string; labels?: { x: number; base: number; t: string; q: boolean }[]; num?: { x: number; y: number; h: number; t?: string; more?: { x: number; y: number; h: number; t: string }[] } } }[];
   answer: { correctOption: string | null; text: string } | null;
   confidence: number;
   status: "DRAFT" | "VERIFIED" | "PUBLISHED";
@@ -339,9 +340,38 @@ export function fileUrl(path: string): string {
   return `${API_URL}/files/${path}`;
 }
 
-/** "Physics · May/June 2026 · Paper 11 · Q1" */
+/**
+ * A paper named the way the exam board prints it (mirrors apps/api/src/papers/paper-label.ts):
+ * head "Paper 1" / "Unit 1" / "Mechanics 1", title "Core Physics I", code "7408/1" / "8PH0/01" / "WPH11" / "WME01".
+ */
+export function paperParts(meta: Pick<PaperMeta, "subjectCode" | "paperCode" | "componentName">): { head: string; title: string | null; code: string } {
+  const name = (meta.componentName ?? "").trim();
+  const bracket = /\(([^()]+)\)\s*$/.exec(name);
+  const code = bracket ? bracket[1].trim() : `${meta.subjectCode}/${meta.paperCode}`;
+  const bare = bracket ? name.slice(0, bracket.index).trim() : name;
+  if (!bare) return { head: `Paper ${meta.paperCode}`, title: null, code };
+  const colon = bare.indexOf(": ");
+  if (colon > 0) return { head: bare.slice(0, colon), title: bare.slice(colon + 2), code };
+  if (/^(paper|unit|module)\b/i.test(bare) || !/^\d+$/.test(meta.paperCode)) return { head: bare, title: null, code };
+  return { head: `Paper ${Number(meta.paperCode)}`, title: bare, code };
+}
+
+/** "Unit 1 (WPH11)" */
+export function paperShort(meta: Pick<PaperMeta, "subjectCode" | "paperCode" | "componentName">): string {
+  const p = paperParts(meta);
+  return `${p.head} (${p.code})`;
+}
+
+/** "Physics · May/June 2026 · Unit 1 (WPH11) · Q1" */
+// The board goes in front of the source only while the shown questions mix boards (set by the question list).
+let boardInSource = false;
+export function setBoardInSource(on: boolean) {
+  boardInSource = on;
+}
+
+/** "Physics · May/June 2026 · Unit 1 (WPH11) · Q1"; "Edexcel · Physics · …" while several boards are shown. */
 export function sourceLine(meta: PaperMeta, questionNumber?: string): string {
-  const parts = [meta.subjectName, `${meta.seasonName} ${meta.year}`, `Paper ${meta.paperCode}`];
+  const parts = [...(boardInSource ? [meta.board] : []), meta.subjectName, `${meta.seasonName} ${meta.year}`, paperShort(meta)];
   if (questionNumber) parts.push(`Q${questionNumber}`);
   return parts.join(" · ");
 }
