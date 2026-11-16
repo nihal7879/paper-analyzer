@@ -1,11 +1,12 @@
 import { useQuery } from "@tanstack/react-query";
-import { ArrowDownUp, ArrowUp, CheckCheck, CircleCheck, Library, Loader2, SearchX, X } from "lucide-react";
+import { ArrowUp, CheckCheck, CircleCheck, Library, Loader2, SearchX, X } from "lucide-react";
 import { Fragment, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useNavigationType, useSearchParams } from "react-router";
 import { ActiveChips } from "@/components/bank-filters";
 import { FilterPanel, FiltersButton, SearchToggle } from "@/components/filter-bar";
 import { AdminMenu } from "@/components/admin-menu";
 import { SettingsMenu } from "@/components/settings-menu";
+import { SortMenu } from "@/components/sort-menu";
 import { Logo, ThemeToggle } from "@/components/top-bar";
 import { warmMath } from "@/components/math-text";
 import { SelectionBar } from "@/components/pdf-download";
@@ -14,13 +15,13 @@ import { SingleQuestionView } from "@/components/single-view";
 import { useViewMode } from "@/lib/preferences";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useAdmin } from "@/lib/admin";
-import { api, setBoardInSource } from "@/lib/api";
+import { api, setBoardInSource, type Question } from "@/lib/api";
+import { difficultyLabel, difficultyStyle } from "@/lib/format";
 import { selection, useSelection } from "@/lib/selection";
 import { fetchIds, PAGE_SIZE, useBankFacets, useBankPages, useEntries } from "@/lib/bank-api";
-import { activeFilterCount, EMPTY_FILTERS, filtersFromParams, filtersToParams, rememberCourse, type Filters, type SortKey } from "@/lib/question-bank";
+import { activeFilterCount, EMPTY_FILTERS, filtersFromParams, filtersToParams, formatSort, parseSort, rememberCourse, SORT_GROUPS, type Filters, type SortGroup, type SortKey } from "@/lib/question-bank";
 import { cn } from "@/lib/utils";
 
 const ANCHOR_KEY = "pa.anchor";
@@ -42,12 +43,33 @@ function saveAnchor() {
   }
 }
 
-const SORT_ITEMS: { value: SortKey; label: string }[] = [
-  { value: "newest", label: "Newest papers first" },
-  { value: "oldest", label: "Oldest papers first" },
-  { value: "topic", label: "By topic" },
-  { value: "board", label: "By board & level" },
-];
+const DIFF_RANK: Record<string, number> = { EASY: 1, MEDIUM: 2, HARD: 3 };
+type GroupPart = { id: string; difficulty: string; marks: number | null; type: string };
+/** The parts a whole question counts as for sorting / headings: those matching the filters (as on the card), else all. */
+function shownParts(e: { partQuestions: GroupPart[]; matched: Set<string> }) {
+  const hit = e.partQuestions.filter((p) => e.matched.has(p.id));
+  return hit.length ? hit : e.partQuestions;
+}
+/** The heading of a question's group under the first ticked sort (same rules as the server's order). */
+function groupHeading(e: ListGroupLike, by: SortGroup): { key: string; badge: string; badgeClass: string; text?: string } | null {
+  const parts = shownParts(e);
+  if (by === "board") return { key: `${e.meta.board}|${e.meta.curriculum}`, badge: e.meta.board, badgeClass: "bg-primary/10 text-primary", text: e.meta.curriculum };
+  if (by === "difficulty") {
+    const d = parts.reduce((h, p) => ((DIFF_RANK[p.difficulty] ?? 2) > (DIFF_RANK[h] ?? 2) ? p.difficulty : h), parts[0]?.difficulty ?? "MEDIUM") as Question["difficulty"];
+    return { key: d, badge: difficultyLabel(d), badgeClass: difficultyStyle[d] };
+  }
+  if (by === "marks") {
+    const known = parts.filter((p) => p.marks != null);
+    const m = known.reduce((n, p) => n + (p.marks ?? 0), 0);
+    return known.length ? { key: String(m), badge: `${m} mark${m === 1 ? "" : "s"}`, badgeClass: "bg-primary/10 text-primary" } : { key: "-", badge: "Marks not set", badgeClass: "bg-muted text-muted-foreground" };
+  }
+  if (by === "type") {
+    const mcq = parts.some((p) => p.type === "MCQ");
+    return { key: mcq ? "MCQ" : "W", badge: mcq ? "MCQ" : "Written", badgeClass: "bg-primary/10 text-primary" };
+  }
+  return null; // topic: no headings (each card names its topic)
+}
+type ListGroupLike = { partQuestions: GroupPart[]; matched: Set<string>; meta: { board: string; curriculum: string } };
 
 export function BrowsePage() {
   const { isAdmin } = useAdmin();
@@ -84,6 +106,29 @@ export function BrowsePage() {
 
   // Several boards in the results: each question's source line names its board (the list re-renders when this flips).
   const mixedBoards = facets.boards.filter((b) => b.count > 0).length > 1;
+  // Sorts that can't change the order are hidden: "By topic" with one subtopic, the others with one value ticked
+  const oneSubtopic =
+    (filters.sub.length === 1 && filters.topic.length <= 1) ||
+    (filters.topic.length === 1 && filters.sub.length === 0 && (facets.topics.find((t) => t.topic === filters.topic[0])?.subs.length ?? 2) <= 1);
+  const sortGroups = useMemo(
+    () =>
+      SORT_GROUPS.filter(
+        (g) =>
+          !(g === "topic" && oneSubtopic) &&
+          !(g === "difficulty" && filters.difficulty.length === 1) &&
+          !(g === "marks" && filters.marks.length === 1) &&
+          !(g === "type" && filters.type.length === 1),
+      ),
+    [oneSubtopic, filters.difficulty.length, filters.marks.length, filters.type.length],
+  );
+  const parsedSort = parseSort(sort);
+  const firstGroup = parsedSort.groups[0];
+  // a ticked sort was hidden: drop it (the rest stay)
+  useEffect(() => {
+    const { groups: g, order } = parseSort(sort);
+    const kept = g.filter((x) => sortGroups.includes(x));
+    if (kept.length !== g.length) setSort(formatSort(kept, order));
+  }, [sortGroups, sort]);
   setBoardInSource(mixedBoards);
 
   // A remembered / linked course that has no published questions is ignored.
@@ -269,7 +314,7 @@ export function BrowsePage() {
 
       <div className="grid gap-4">
         {/* Results (full width; filters open from the toolbar) */}
-        <section className={cn("grid min-w-0 gap-4", selected.length > 0 && "pb-20")}>
+        <section className={cn("grid min-w-0 gap-4", selected.length > 0 && "pb-28")}>
           {/* Toolbar: count · 🔍 · Filters · Select all · Sort */}
           <div className="flex items-center gap-2">
             <div className={cn("mr-1 sm:mr-2", logoName && "max-sm:mr-auto", (searchOpen || typedQ) && "max-sm:hidden")}>
@@ -302,21 +347,7 @@ export function BrowsePage() {
                 {allResultsSelected ? "Unselect all" : `Select all ${total}`}
               </Button>
             )}
-            <Select items={SORT_ITEMS} value={sort} onValueChange={(v) => update({}, (v as SortKey) ?? "newest")}>
-              <SelectTrigger className="btn-soft h-10 w-auto shrink-0 rounded-xl border-[color:var(--btn-border)] bg-card font-semibold sm:h-9 sm:w-44" aria-label="Sort">
-                <ArrowDownUp className="size-4 sm:hidden" />
-                <span className="max-sm:hidden">
-                  <SelectValue />
-                </span>
-              </SelectTrigger>
-              <SelectContent align="end">
-                {SORT_ITEMS.map((s) => (
-                  <SelectItem key={s.value} value={s.value}>
-                    {s.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <SortMenu sort={sort} available={sortGroups} onChange={(v) => update({}, v)} />
             <SettingsMenu />
             {/* admins: light / dark is in the Admin menu; students' phones: in Settings */}
             {isAdmin ? <AdminMenu /> : <ThemeToggle className="max-sm:hidden" />}
@@ -404,15 +435,15 @@ export function BrowsePage() {
             <>
               <div key={mixedBoards ? "mixed" : "one"} className={cn("grid gap-4 transition-opacity duration-200", list.isUpdating && "opacity-60")}>
                 {groups.map((e, n) => {
-                  // "By board & level": a heading where the next board / level starts
-                  const prev = groups[n - 1]?.meta;
-                  const heading = sort === "board" && (!prev || prev.board !== e.meta.board || prev.curriculum !== e.meta.curriculum);
+                  // a heading where the next group of the first ticked sort starts (Easy / Medium / Hard, 2 marks, MCQ, a board …)
+                  const head = firstGroup ? groupHeading(e, firstGroup) : null;
+                  const showHead = !!head && (n === 0 || groupHeading(groups[n - 1], firstGroup!)?.key !== head.key);
                   return (
                     <Fragment key={e.key}>
-                      {heading && (
+                      {showHead && head && (
                         <h2 className={cn("flex items-center gap-2 text-sm font-semibold text-primary", n > 0 && "pt-3")}>
-                          <span className="rounded-full bg-primary/10 px-2.5 py-1">{e.meta.board}</span>
-                          <span>{e.meta.curriculum}</span>
+                          <span className={cn("rounded-full px-2.5 py-1", head.badgeClass)}>{head.badge}</span>
+                          {head.text && <span>{head.text}</span>}
                         </h2>
                       )}
                       <div className="card-auto" data-card-key={e.key}>

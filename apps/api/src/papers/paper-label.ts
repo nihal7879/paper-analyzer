@@ -28,3 +28,14 @@ export function paperFacetLabel(papers: { subjectCode: string; paperCode: string
   const sameTitle = titles.length === 1 && parts.every((p) => p.title === titles[0]);
   return `${heads.join(' / ')} (${uniq(parts.map((p) => p.code)).join(', ')})${sameTitle ? ` · ${titles[0]}` : ''}`;
 }
+
+/**
+ * The curriculum a student picks (SQL, needs `b` = boards and `c` = curriculums): the international A Levels are
+ * shown as their own curriculums, "IAL" (Edexcel International) and "Oxford AQA" (AQA International);
+ * every other board keeps its name. The boards table itself is unchanged (imports still use the real board).
+ */
+export const CURRICULUM_SQL =
+  "CAST(CASE WHEN c.level LIKE 'International%' THEN CASE b.name WHEN 'Edexcel' THEN 'IAL' WHEN 'AQA' THEN 'Oxford AQA' ELSE CONCAT(b.name, ' International') END ELSE b.name END AS CHAR) COLLATE utf8mb4_unicode_ci";
+
+/** The order curriculums are listed in (filters, "By board & level"); any other board comes after, by name. */
+export const CURRICULUM_ORDER = ['Edexcel', 'IAL', 'AQA', 'Oxford AQA', 'KS3'];

@@ -1,3 +1,4 @@
+import { CURRICULUM_SQL } from './paper-label.js';
 import { Inject, Injectable } from '@nestjs/common';
 import type { Knex } from 'knex';
 import { KNEX } from '../database/database.module.js';
@@ -118,7 +119,7 @@ export class PapersRepository {
       .select(
         'p.id as dbId',
         'p.slug',
-        'b.name as board',
+        this.db.raw(`${CURRICULUM_SQL} as board`),
         'c.name as curriculum',
         's.code as subjectCode',
         's.name as subjectName',

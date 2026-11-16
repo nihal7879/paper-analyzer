@@ -60,7 +60,7 @@ export function PaperDownloadMenu({ meta, children, className }: { meta: PaperMe
           "flex h-8 items-center gap-1.5 rounded-md px-2 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground active:scale-95 data-popup-open:bg-muted lg:h-auto lg:py-1",
           className,
         )}
-        title="Download this paper"
+        title="Download the original question paper / mark scheme"
       >
         {children}
       </PopoverTrigger>
@@ -68,11 +68,11 @@ export function PaperDownloadMenu({ meta, children, className }: { meta: PaperMe
         <p className="px-2 pt-1 pb-1.5 text-xs font-semibold text-muted-foreground">{sourceLine(meta)}</p>
         {/* The original PDFs only (the rebuilt whole-paper downloads were removed) */}
         <a className={item} href={originalPdfUrl(meta.id, "qp")} target="_blank" rel="noreferrer" onClick={() => setOpen(false)}>
-          <FileText className="size-4 text-primary" /> Original question paper
+          <FileText className="size-4 text-primary" /> Question paper (original PDF)
         </a>
         {meta.msFileName && (
           <a className={item} href={originalPdfUrl(meta.id, "ms")} target="_blank" rel="noreferrer" onClick={() => setOpen(false)}>
-            <FileText className="size-4 text-primary" /> Original mark scheme
+            <FileText className="size-4 text-primary" /> Mark scheme (original PDF)
           </a>
         )}
       </PopoverContent>
@@ -93,7 +93,7 @@ export function SelectionBar({ ids, byId }: { ids: string[]; byId: Map<string, B
     <>
       <div
         className={cn(
-          "pointer-events-none fixed inset-x-0 bottom-[max(1rem,env(safe-area-inset-bottom))] z-30 flex justify-center px-4 transition-[transform,opacity] duration-300 ease-out",
+          "pointer-events-none fixed inset-x-0 bottom-[max(2.5rem,calc(env(safe-area-inset-bottom)+1.5rem))] z-30 flex justify-center px-4 transition-[transform,opacity] duration-300 ease-out",
           visible ? "translate-y-0 opacity-100" : "translate-y-6 opacity-0",
         )}
         aria-hidden={!visible}

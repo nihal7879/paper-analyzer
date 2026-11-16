@@ -13,6 +13,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { api, isProcessing, sourceLine, type PaperListItem, type PaperMeta, type PaperStatus } from "@/lib/api";
 
 type Sort = "newest" | "oldest" | "review" | "published";
+const CURRICULUM_ORDER = ["Edexcel", "IAL", "AQA", "Oxford AQA", "KS3"];
 type Show = "all" | "review" | "published";
 type View = "groups" | "cards";
 
@@ -116,7 +117,9 @@ function PapersList() {
       if (isPublished(p)) t.published++;
       by.set(k, t);
     }
-    return [...by.values()].sort((a, b) => a.key.localeCompare(b.key));
+    // curriculums in the fixed order (Edexcel, IAL, AQA, Oxford AQA, KS3), everything else by name
+    const rank = (k: string) => (step === "board" && CURRICULUM_ORDER.includes(k) ? CURRICULUM_ORDER.indexOf(k) : 99);
+    return [...by.values()].sort((a, b) => rank(a.key) - rank(b.key) || a.key.localeCompare(b.key));
   }, [step, inPath]);
   const paperItems = searching ? shown : step === "papers" ? shown.filter((p) => p.meta.subjectName === subject && p.meta.board === board && p.meta.curriculum === level) : [];
   const shownCount = paperItems.length;

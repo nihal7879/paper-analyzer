@@ -1,0 +1,16 @@
+import { NestFactory } from '@nestjs/core';
+import { AppModule } from './dist/app.module.js';
+import { KNEX } from './dist/database/database.module.js';
+import { QuestionCropsService } from './dist/processing/question-crops.service.js';
+import fs from 'fs';
+const slug = process.argv[2];
+const app = await NestFactory.createApplicationContext(AppModule, { logger: ['error'] });
+const db = app.get(KNEX);
+const paper = await db('papers').where({ slug }).first('id');
+const parts = await db('questions').where({ paper_id: paper.id }).whereNull('deleted_at').orderBy('sort_order').select('id', 'number');
+const svc = app.get(QuestionCropsService);
+const buf = fs.readFileSync(`D:/paper-analyzer-storage/papers/${slug}/qp.pdf`);
+const found = await svc.findQuestionBoxes(slug, buf, parts);
+console.log('parts', parts.length, 'found', found.size);
+console.log('missing:', parts.filter(p => !found.has(p.id)).map(p => p.number).join(', '));
+await app.close();

@@ -109,8 +109,30 @@ export interface Facets {
 
 // ---------------- sorting
 
-/** "board": grouped by board, then level (results from several boards). */
-export type SortKey = "newest" | "oldest" | "topic" | "board";
+/**
+ * Group sorts, ticked in priority order (the first one gives the groups and headings):
+ * difficulty Easy → Hard (a question = its hardest part), marks low → high (its total), type MCQ first,
+ * topic in textbook order, board = curriculum then level.
+ */
+export type SortGroup = "difficulty" | "marks" | "type" | "topic" | "board";
+export type SortOrder = "newest" | "oldest";
+export const SORT_GROUPS: SortGroup[] = ["difficulty", "marks", "type", "topic", "board"];
+/** The sort in the link and API: "difficulty,marks,oldest" = the group sorts, then newest / oldest ("newest" alone = no grouping). */
+export type SortKey = string;
+
+export function parseSort(s: string | null | undefined): { groups: SortGroup[]; order: SortOrder } {
+  const groups: SortGroup[] = [];
+  let order: SortOrder = "newest";
+  for (const part of (s ?? "").split(",")) {
+    if (part === "newest" || part === "oldest") order = part;
+    else if ((SORT_GROUPS as string[]).includes(part) && !groups.includes(part as SortGroup)) groups.push(part as SortGroup);
+  }
+  return { groups, order };
+}
+
+export function formatSort(groups: SortGroup[], order: SortOrder): SortKey {
+  return groups.length ? [...groups, ...(order === "oldest" ? ["oldest"] : [])].join(",") : order;
+}
 
 
 // ---------------- URL <-> filters

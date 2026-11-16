@@ -39,9 +39,12 @@ export function checkPaper(questions: Question[]): PaperIssue[] {
     if (!p) add('error', 'number', q, `"${q.number}" has no question number in front (e.g. it should be 13${q.number}). Fix the part number.`);
     else byQ.set(p.q, [...(byQ.get(p.q) ?? []), { q, p }]);
 
-    const pages = [...new Set(q.pages?.length ? q.pages : [q.page])].sort((a, b) => a - b);
+    // Judge the pages of the part's real crops when it has them (the stored page list can also hold Answer Book pages of an "A"
+    // paper); a gap of a few pages is a blank page ("This question continues on page 32 after the blank page"), not a merged part.
+    const cropPages = (q.crops ?? []).filter((c) => c.path).map((c) => c.page);
+    const pages = [...new Set(cropPages.length ? cropPages : q.pages?.length ? q.pages : [q.page])].sort((a, b) => a - b);
     for (let i = 1; i < pages.length; i++)
-      if (pages[i] - pages[i - 1] > 1) {
+      if (pages[i] - pages[i - 1] > 4) {
         add('error', 'pages', q, `Q${q.number} is on pages ${pages.join(', ')}: pages far apart usually means two parts were merged. Split it, or fix its pages.`);
         break;
       }

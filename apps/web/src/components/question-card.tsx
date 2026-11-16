@@ -69,8 +69,8 @@ export const QuestionCard = memo(function QuestionCard({
   const hasMarks = shown.some((p) => p.marks != null);
   const hardest = shown.reduce((h, p) => (DIFF_RANK[p.difficulty] > DIFF_RANK[h.difficulty] ? p : h), shown[0]).difficulty;
   const subtopics = [...new Set(shown.map((p) => p.subtopic).filter(Boolean))];
-  // With filters on, "Add to PDF" takes only the parts that match them (a, b or c); otherwise the whole question.
-  const pickIds = useMemo(() => (partial ? all.filter((p) => matched!.has(p.id)).map((p) => p.id) : ids), [partial, all, matched, ids]);
+  // "Add to PDF" always takes the WHOLE question (a, b and c) even when only one part matches the filters.
+  const pickIds = ids;
 
   return (
     <Card className={cn("gap-0 overflow-hidden rounded-[14px] border border-foreground/12 p-0 ring-0", showConfidence && lowConfidence && "ring-2 ring-amber-400/60", className)}>
@@ -82,7 +82,7 @@ export const QuestionCard = memo(function QuestionCard({
           {selectable && (
             <>
               <PaperDownloadMenu meta={meta}>
-                <Download className="size-3.5" /> Paper
+                <Download className="size-3.5" /> Full paper
               </PaperDownloadMenu>
               <SelectButton ids={pickIds} />
             </>
@@ -211,11 +211,15 @@ const pageLinkCls =
 function ExamPages({ paperId, pages, title }: { paperId: string; pages: number[]; title: string }) {
   const [open, setOpen] = useState(false);
   const many = pages.length > 1;
+  // "5", "5–6" (pages in a row), else "5, 7"
+  const inRow = pages.every((p, i) => i === 0 || p === pages[i - 1] + 1);
+  const pageText = many && inRow ? `${pages[0]}–${pages[pages.length - 1]}` : pages.join(", ");
   return (
     <>
-      <button type="button" onClick={() => setOpen(true)} className={pageLinkCls} title={many ? `Show the original exam pages (${pages.length})` : "Show the original exam page"}>
+      <button type="button" onClick={() => setOpen(true)} className={pageLinkCls} title={many ? "See this question on the original exam pages" : "See this question on the original exam page"}>
         <FileText className="size-3.5" />
-        {many ? "Pages" : "Page"} {pages.join(", ")}
+        <span className="sm:hidden">Exam p. {pageText}</span>
+        <span className="max-sm:hidden">View in exam paper (p. {pageText})</span>
         <ExternalLink className="size-3" />
       </button>
       <Dialog open={open} onOpenChange={setOpen}>

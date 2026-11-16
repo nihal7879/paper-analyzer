@@ -1,7 +1,7 @@
 import { BadRequestException, Inject, Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import type { Knex } from 'knex';
 import { KNEX } from '../database/database.module.js';
-import { paperFacetLabel } from './paper-label.js';
+import { CURRICULUM_ORDER, CURRICULUM_SQL, paperFacetLabel } from './paper-label.js';
 import type { PaperMeta, Question } from './paper.types.js';
 import { PapersRepository } from './papers.repository.js';
 
@@ -34,7 +34,15 @@ export interface BankFilters {
   difficulty: string[];
   marks: string[];
 }
-export type BankSort = 'newest' | 'oldest' | 'topic' | 'board';
+/** Group sorts, in priority order (the first one decides the groups / headings). */
+export type SortGroup = 'difficulty' | 'marks' | 'type' | 'topic' | 'board';
+const SORT_GROUPS: SortGroup[] = ['difficulty', 'marks', 'type', 'topic', 'board'];
+/** Group sorts, then newest / oldest inside the last group. Link form: "difficulty,marks,oldest" ("newest" alone = no grouping). */
+export interface BankSort {
+  groups: SortGroup[];
+  order: 'newest' | 'oldest';
+}
+const NEWEST: BankSort = { groups: [], order: 'newest' };
 type Skip = 'board' | 'level' | 'course' | 'topic' | 'year' | 'paper' | 'code' | 'season' | 'type' | 'difficulty' | 'marks' | 'q';
 type Entry = { meta: PaperMeta; question: Question; order: number };
 export interface FacetOption {
@@ -49,9 +57,11 @@ const MULTI = ['paper', 'code', 'season', 'type', 'difficulty', 'marks'] as cons
 const ALL_BUT_CHAIN: Skip[] = ['topic', 'year', 'paper', 'code', 'season', 'type', 'difficulty', 'marks', 'q'];
 const SUB_SEP = '\u001f';
 // Same values the website uses (see web lib/question-bank.ts)
-// Each board names its topics after its own textbook: a topic is kept apart per book ("Edexcel", "Edexcel International",
-// "AQA", "AQA International"), so the same name in two books stays two choices. Value: "<book>\u001e<topic name>".
-const BOOK = "CONCAT(b.name, IF(c.level LIKE 'International%', ' International', ''))";
+// The curriculum a student picks: "Edexcel", "IAL", "AQA", "Oxford AQA", "KS3" (see paper-label.ts).
+const BOARD = CURRICULUM_SQL;
+// Each curriculum names its topics after its own textbook: a topic is kept apart per book ("Edexcel", "IAL",
+// "AQA", "Oxford AQA"), so the same name in two books stays two choices. Value: "<book>\u001e<topic name>".
+const BOOK = BOARD;
 const TOPIC_SEP = "\u001e";
 const TOPIC = `CONCAT(${BOOK}, CHAR(30), COALESCE(t.name, 'General'))`;
 const SUBKEY = `CONCAT(${TOPIC}, CHAR(31), COALESCE(st.name, q.subtopic_label, ''))`;
@@ -64,11 +74,11 @@ const CODE = CHAR(
 );
 const TYPE = "IF(q.type = 'MCQ', 'MCQ', 'WRITTEN')";
 const MARKS = CHAR('q.marks');
-// The general level of a part, the same across boards: "AS Level", "A Level", "International A Level".
+// The general level of a part, the same across boards: "AS Level", "A Level" (IAL and Oxford AQA: "A Level" only).
 // Cambridge keeps AS and A Level in one syllabus: papers 1–3 are AS, 4–5 A Level.
 // KS3: the year a topic is taught in (Year 7 / 8 / 9, set on the subtopic or topic) comes first.
 const LEVEL = CHAR(
-  "COALESCE(st.year_group, t.year_group, CASE WHEN c.level = 'AS & A Level' THEN IF(COALESCE(co.number, FLOOR(CAST(p.paper_code AS UNSIGNED) / 10)) BETWEEN 1 AND 3, 'AS Level', 'A Level') ELSE c.level END, c.name)",
+  "COALESCE(st.year_group, t.year_group, CASE WHEN c.level = 'AS & A Level' THEN IF(COALESCE(co.number, FLOOR(CAST(p.paper_code AS UNSIGNED) / 10)) BETWEEN 1 AND 3, 'AS Level', 'A Level') WHEN c.level LIKE 'International %' THEN TRIM(SUBSTRING(c.level, 15)) ELSE c.level END, c.name)",
 );
 const WHOLE = 'COUNT(DISTINCT q.paper_id, q.base_number)';
 const PAGE_MAX = 50;
@@ -193,8 +203,13 @@ export class BankSearchService implements OnModuleInit {
       const v = Number(one(k));
       return Number.isFinite(v) && one(k) !== null ? v : null;
     };
-    const sort = (one('sort') ?? 'newest') as BankSort;
-    if (!['newest', 'oldest', 'topic', 'board'].includes(sort)) throw new BadRequestException('Unknown sort');
+    const sort: BankSort = { groups: [], order: 'newest' };
+    for (const part of (one('sort') ?? 'newest').split(',').map((x) => x.trim()).filter(Boolean)) {
+      if (part === 'newest' || part === 'oldest') sort.order = part;
+      else if ((SORT_GROUPS as string[]).includes(part)) {
+        if (!sort.groups.includes(part as SortGroup)) sort.groups.push(part as SortGroup);
+      } else throw new BadRequestException('Unknown sort');
+    }
     return {
       f: {
         board: list('board'),
@@ -235,7 +250,7 @@ export class BankSearchService implements OnModuleInit {
       .where('p.status', 'PUBLISHED')
       .where('q.status', 'PUBLISHED')
       .whereNull('q.deleted_at');
-    if (!s.has('board') && f.board.length) qb.whereIn('b.name', f.board);
+    if (!s.has('board') && f.board.length) qb.whereRaw(`${BOARD} IN (${f.board.map(() => '?').join(', ')})`, f.board);
     // level: the general level ("AS Level", every board); older links name a board's own level ("Edexcel AS Level")
     if (!s.has('level') && f.level.length) qb.where((w) => w.whereRaw(`${LEVEL} IN (${f.level.map(() => '?').join(', ')})`, f.level).orWhereIn('c.name', f.level));
     // course: a subject by name ("Physics", every board); older links / remembered choices give a code ("8PH0")
@@ -278,16 +293,31 @@ export class BankSearchService implements OnModuleInit {
         .clearSelect()
         .select('q.paper_id', 'q.base_number')
         .min({ ord: 'q.sort_order' })
-        .max({ yr: 'p.year', se: 'se.sort_order', pc: 'p.paper_code', bn: 'b.name', cn: 'c.name' })
+        .max({ yr: 'p.year', se: 'se.sort_order', pc: 'p.paper_code', cn: 'c.name' })
+        .select(this.db.raw(`MAX(${BOARD}) as bn`))
+        // curriculum position: Edexcel, IAL, AQA, Oxford AQA, KS3, then others
+        .select(this.db.raw(`MIN(CASE ${BOARD} ${CURRICULUM_ORDER.map((c, i) => `WHEN '${c}' THEN ${i}`).join(' ')} ELSE 99 END) as bo`))
         .select(this.db.raw('MIN(COALESCE(t.sort_order, 9999)) as ts, MIN(COALESCE(st.sort_order, 9999)) as sts'))
+        // a whole question's difficulty is its hardest part (of the parts matching the filters), like the card's badge
+        .select(this.db.raw("MAX(CASE q.difficulty WHEN 'EASY' THEN 1 WHEN 'MEDIUM' THEN 2 WHEN 'HARD' THEN 3 ELSE 2 END) as dr"))
+        // marks: the whole question's total (of the parts matching the filters), like the card; unknown marks last
+        .select(this.db.raw('COALESCE(SUM(q.marks), 9999) as mk'))
+        // question type: MCQ first, then written
+        .select(this.db.raw("MIN(IF(q.type = 'MCQ', 0, 1)) as tp"))
         .groupBy('q.paper_id', 'q.base_number');
-      if (sort === 'newest') groups.orderBy([{ column: 'yr', order: 'desc' }, { column: 'se', order: 'desc' }, { column: 'pc', order: 'asc' }, { column: 'ord', order: 'asc' }]);
-      if (sort === 'oldest') groups.orderBy([{ column: 'yr', order: 'asc' }, { column: 'se', order: 'asc' }, { column: 'pc', order: 'desc' }, { column: 'ord', order: 'asc' }]);
-      // grouped by board, then level (results from several boards), newest first inside each
-      if (sort === 'board')
-        groups.orderBy([{ column: 'bn', order: 'asc' }, { column: 'cn', order: 'asc' }, { column: 'yr', order: 'desc' }, { column: 'se', order: 'desc' }, { column: 'pc', order: 'asc' }, { column: 'ord', order: 'asc' }]);
-      if (sort === 'topic')
-        groups.orderBy([{ column: 'ts', order: 'asc' }, { column: 'sts', order: 'asc' }, { column: 'yr', order: 'desc' }, { column: 'se', order: 'desc' }, { column: 'pc', order: 'asc' }, { column: 'ord', order: 'asc' }]);
+    // Each ticked sort in turn (first = the main groups), then newest / oldest inside the last one
+    const by: Record<SortGroup, { column: string; order: 'asc' | 'desc' }[]> = {
+      difficulty: [{ column: 'dr', order: 'asc' }], // Easy, Medium, Hard
+      marks: [{ column: 'mk', order: 'asc' }], // fewest marks first
+      type: [{ column: 'tp', order: 'asc' }], // MCQ first
+      topic: [{ column: 'ts', order: 'asc' }, { column: 'sts', order: 'asc' }], // textbook topic, then subtopic order
+      board: [{ column: 'bo', order: 'asc' }, { column: 'bn', order: 'asc' }, { column: 'cn', order: 'asc' }], // curriculum (fixed order), then level
+    };
+    const time: { column: string; order: 'asc' | 'desc' }[] =
+      sort.order === 'oldest'
+        ? [{ column: 'yr', order: 'asc' }, { column: 'se', order: 'asc' }, { column: 'pc', order: 'desc' }]
+        : [{ column: 'yr', order: 'desc' }, { column: 'se', order: 'desc' }, { column: 'pc', order: 'asc' }];
+    groups.orderBy([...sort.groups.flatMap((g) => by[g]), ...time, { column: 'ord', order: 'asc' }]);
     return groups;
   }
 
@@ -382,7 +412,7 @@ export class BankSearchService implements OnModuleInit {
       const [boards, levels, subjects, topicRows, topicCounts, subCounts, bounds, yearCounts, papers, codes, seasons, types, difficulties, marks, total] = await Promise.all([
         // Board, Level and Subject work across each other (Physics + AS Level = every board's AS Physics):
         // each list counts with the other two applied; topics depend on all three
-        count(['board', 'topic'], 'b.name', 'b.name'),
+        count(['board', 'topic'], BOARD, BOARD),
         count(['level', 'topic'], LEVEL, LEVEL),
         count(['course', 'topic'], 's.name', 's.name', 'GROUP_CONCAT(DISTINCT s.code) as codes'),
         this.base(g, ALL_BUT_CHAIN).clearSelect().distinct(this.db.raw(`${TOPIC} as topic, t.code as code, COALESCE(st.name, q.subtopic_label, '') as sub, st.code as subCode`)),
@@ -400,7 +430,7 @@ export class BankSearchService implements OnModuleInit {
       ]);
 
       // Topic tree: topics (in the chosen board / level / subject) -> textbook subtopics, with counts.
-      // With several books in play each topic says which book it is from ("Projectiles · Edexcel International").
+      // With several books in play each topic says which book it is from ("Projectiles · IAL").
       const inPlay = (await this.base(g, ALL_BUT_CHAIN).clearSelect().countDistinct({ n: this.db.raw(BOOK) }).first()) as { n: number } | undefined;
       const mixed = Number(inPlay?.n ?? 0) > 1;
       const tCount = new Map(topicCounts.map((r: any) => [r.topic, Number(r.n)]));
@@ -427,7 +457,11 @@ export class BankSearchService implements OnModuleInit {
         }));
 
       return {
-        boards: boards.sort(byCount),
+        // fixed order: Edexcel, IAL, AQA, Oxford AQA, KS3 (others after, by name)
+        boards: boards.sort((a, b) => {
+          const r = (v: string) => (CURRICULUM_ORDER.includes(v) ? CURRICULUM_ORDER.indexOf(v) : 99);
+          return r(a.value) - r(b.value) || a.label.localeCompare(b.label);
+        }),
         levels: levels.sort(byCount),
         subjects: subjects.sort(byCount),
         topics,
@@ -472,16 +506,25 @@ export class BankSearchService implements OnModuleInit {
   // ------------------------------------------------------------------ select all, entries
 
   /**
-   * Select all: the id of every part that matches the filters (only those parts, e.g. 15(b) but not 15(a) when only
-   * (b) matches), capped — in the same order as the list on screen (so the PDF follows what the teacher saw).
+   * Select all: the id of every part of every question that matches the filters (the WHOLE question, e.g. 15(a), (b) and
+   * (c) even when only (b) matches), capped — in the same order as the list on screen (so the PDF follows what the
+   * teacher saw).
    */
-  async ids(f: BankFilters, sort: BankSort = 'newest') {
+  async ids(f: BankFilters, sort: BankSort = NEWEST) {
     return this.cached(`ids:${JSON.stringify([f, sort])}`, async () => {
       const order: { paper_id: number; base_number: string }[] = await this.orderedGroups(f, sort);
       const rank = new Map(order.map((g, i) => [`${g.paper_id}|${g.base_number}`, i]));
-      const rows: { id: number; paper_id: number; base_number: string; sort_order: number }[] = await this.base(f)
-        .clearSelect()
-        .distinct('q.id', 'q.paper_id', 'q.base_number', 'q.sort_order');
+      type Row = { id: number; paper_id: number; base_number: string; sort_order: number };
+      const hit: Row[] = await this.base(f).clearSelect().distinct('q.id', 'q.paper_id', 'q.base_number', 'q.sort_order');
+      // the other parts of each matching question come along (published parts of the same paper with the same question number)
+      const groups = new Set(hit.map((r) => `${r.paper_id}|${r.base_number}`));
+      const papers = [...new Set(hit.map((r) => r.paper_id))];
+      const none: BankFilters = { board: [], level: [], course: [], q: '', topic: [], sub: [], yearFrom: null, yearTo: null, paper: [], code: [], season: [], type: [], difficulty: [], marks: [] };
+      const rows: Row[] = [];
+      for (let i = 0; i < papers.length; i += 400) {
+        const part: Row[] = await this.base(none).clearSelect().distinct('q.id', 'q.paper_id', 'q.base_number', 'q.sort_order').whereIn('q.paper_id', papers.slice(i, i + 400));
+        rows.push(...part.filter((r) => groups.has(`${r.paper_id}|${r.base_number}`)));
+      }
       rows.sort((a, b) => (rank.get(`${a.paper_id}|${a.base_number}`) ?? 1e9) - (rank.get(`${b.paper_id}|${b.base_number}`) ?? 1e9) || a.sort_order - b.sort_order);
       return { ids: rows.slice(0, IDS_MAX).map((r) => String(r.id)), capped: rows.length > IDS_MAX };
     });

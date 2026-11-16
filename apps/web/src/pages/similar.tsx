@@ -1,4 +1,4 @@
-import { ArrowLeft, Check, ChevronLeft, ChevronRight, Sparkles } from "lucide-react";
+import { ArrowLeft, Check, CheckCheck, ChevronLeft, ChevronRight, Sparkles } from "lucide-react";
 import { useCallback, useEffect, useMemo } from "react";
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from "react-router";
 import { SelectionBar } from "@/components/pdf-download";
@@ -14,7 +14,7 @@ import { paperShort, sourceLine } from "@/lib/api";
 import { difficultyLabel, difficultyStyle, typeLabel } from "@/lib/format";
 import { useEntries } from "@/lib/bank-api";
 import type { BankEntry } from "@/lib/question-bank";
-import { useSelection } from "@/lib/selection";
+import { selection, useSelection } from "@/lib/selection";
 import { cn } from "@/lib/utils";
 
 /** Same number as the card's "Similar questions (5)". */
@@ -42,6 +42,9 @@ export function SimilarPage() {
   // Item 0 is the student's own question, then the similar ones (best first).
   const items: BankEntry[] = useMemo(() => (origin ? [origin, ...similarQuery.entries.slice(0, SIMILAR_COUNT)] : []), [origin, similarQuery.entries]);
   const selectedEntries = useEntries(selected);
+  // "Select all": your question and every similar one shown, for the PDF
+  const listIds = useMemo(() => items.map((e) => e.question.id), [items]);
+  const allListed = listIds.length > 0 && listIds.every((x) => selectedSet.has(x));
   const last = items.length - 1;
   const index = Math.min(Math.max(Number(params.get("i") ?? 1) || 0, 0), Math.max(last, 0));
   const current = items[index];
@@ -93,7 +96,7 @@ export function SimilarPage() {
   const shortSource = (e: BankEntry) => `${e.meta.seasonName} ${e.meta.year} · ${paperShort(e.meta)} · Q${e.question.number}`;
 
   return (
-    <div className={cn("grid grid-cols-[minmax(0,1fr)] gap-4", selected.length > 0 && "pb-20")}>
+    <div className={cn("grid grid-cols-[minmax(0,1fr)] gap-4", selected.length > 0 && "pb-28")}>
       {/* Header */}
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
         <Logo compact />
@@ -114,6 +117,16 @@ export function SimilarPage() {
       <div className="grid grid-cols-[minmax(0,1fr)] items-start gap-4 lg:grid-cols-[300px_minmax(0,1fr)] lg:gap-6">
         {/* List */}
         <nav aria-label="Similar questions" className="lg:sticky lg:top-[calc(var(--header-h)+1rem)]">
+          {items.length > 1 && (
+            <Button
+              variant={allListed ? "secondary" : "outline"}
+              size="sm"
+              className="mb-2 w-full gap-1.5"
+              onClick={() => (allListed ? selection.removeMany(listIds) : selection.addMany(listIds))}
+            >
+              <CheckCheck className="size-4" /> {allListed ? "Unselect all" : `Select all (${items.length})`}
+            </Button>
+          )}
           <div role="tablist" className="panel-scroll flex gap-2 overflow-x-auto rounded-2xl border bg-card p-2 lg:max-h-[calc(100vh-7rem)] lg:flex-col lg:overflow-x-visible lg:overflow-y-auto">
             {items.map((e, k) => {
               const on = k === index;

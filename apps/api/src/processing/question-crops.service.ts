@@ -73,7 +73,7 @@ const OVERRIDES: Record<string, { number: string; page: number; y: number }[]> =
 const MS_NUM = /^\*?\s*(\d{1,2})\s*(?:\(?\s*([a-h])\s*\)?)?\s*(?:\(\s*(i|ii|iii|iv|v|vi|vii|viii)\s*\))?\s*\*?\s*$/i;
 const partKey = (q: string, l: string | null, r: string | null) => `${q}|${l ?? ''}|${r ?? ''}`;
 function parseNumber(s0: string): { q: string; l: string | null; r: string | null } | null {
-  const s = s0.replace(/^\*\s*/, '').replace(/^(\d{1,2})\.$/, '$1'); // "2." is question 2
+  const s = s0.replace(/^\*\s*/, '').replace(/^(\d{1,2})[.:]$/, '$1'); // "2." / "2:" is question 2
   const m = MS_NUM.exec(s.replace(/\s+/g, '')) ?? MS_NUM.exec(s);
   return m ? { q: String(+m[1]), l: m[2]?.toLowerCase() ?? null, r: m[3]?.toLowerCase() ?? null } : null;
 }
@@ -610,11 +610,15 @@ export class QuestionCropsService {
     };
     const partByKey = new Map<string, Part>();
     const firstOfQ = new Map<string, Part>();
+    // first part of each lettered part ("5(b)(i)" for "5|b"): a "(b) …" stem line with no 5(b) part of its own
+    // starts that part, so the stem is cut with (b)(i) instead of being left at the end of the part before
+    const firstOfLetter = new Map<string, Part>();
     for (const p of parts) {
       const k = parsePart(p.number);
       if (!k) continue;
       partByKey.set(partKey(k.q, k.letter, k.roman), p);
       if (!firstOfQ.has(k.q)) firstOfQ.set(k.q, p);
+      if (k.letter && !firstOfLetter.has(`${k.q}|${k.letter}`)) firstOfLetter.set(`${k.q}|${k.letter}`, p);
     }
 
     const { doc, close } = await openPdf(pdfBuf);
@@ -622,7 +626,12 @@ export class QuestionCropsService {
       type Ev = { page: number; y: number; kind: 'start' | 'total'; q?: string | null; part?: Part; numberItem?: (Item & { page: number }) | null };
       const events: Ev[] = [];
       let state: { q: string | null; letter: string | null; roman: string | null } = { q: null, letter: null, roman: null };
+      // where this paper prints its question numbers: "(a)" / "(i)" labels are looked for just right of that column
+      // (papers differ: numbers at x 0.07 with "(a)" at 0.10, or numbers at 0.12 with "(a)" at 0.15)
+      let numX: number | null = null;
       const pageTops: Record<number, number> = {};
+      // pages with no text at all (a full-page graph grid / figure): part of the part that spans them
+      const graphicPages = new Set<number>();
       const offsets: Record<number, { dx: number; dy: number }> = {};
       const lefts: Record<number, number[]> = { 0: [], 1: [] };
       const rights: Record<number, number[]> = { 0: [], 1: [] };
@@ -632,20 +641,34 @@ export class QuestionCropsService {
         const page = await doc.getPage(n);
         const vp = page.getViewport({ scale: 1 });
         const tc = await page.getTextContent();
+        // "A" papers: the question paper is followed by an Answer Book with its own cover page ("Please check the
+        // examination details…") and then only blank answer space. Nothing after that second cover holds question text.
+        if (n > 1 && /Please check the examination details/i.test((tc.items as { str?: string }[]).map((i) => i.str ?? '').join(' '))) break;
         // raw PDF positions recognise the labels; the page image can be offset from them (crop box) — that offset
         // is applied only to the final boxes
         const items: Item[] = [];
         for (const it of tc.items as { str?: string; transform: number[]; width: number; height: number }[]) {
           if (!it.str?.trim()) continue;
+          // the sideways "DO NOT WRITE IN THIS AREA" margin text can share a line with a question number: ignore it
+          // (it is printed sideways, sometimes split into "DO" + "NOT WRITE IN THIS AREA"): skip all rotated text
+          if (/DO\s*NOT\s*WRITE/i.test(it.str) || Math.abs(it.transform[1]) > Math.abs(it.transform[0])) continue;
           const [vx, vy] = vp.convertToViewportPoint(it.transform[4], it.transform[5]);
           const x = it.transform[4] / vp.width;
           const base = 1 - it.transform[5] / vp.height;
           offsets[n] = { dx: vx / vp.width - x, dy: vy / vp.height - base };
           const top = base - it.height / vp.height;
           // "1." (maths papers print the question number with a dot) counts as "1"
-          if (top > TOP && base < BOTTOM && x < RIGHT) items.push({ str: it.str.trim().replace(/^\*\s*(?=[(\d])/, '').replace(/^(\d{1,2})\.$/, '$1'), x, w: it.width / vp.width, base, top });
+          // "(f )" (some papers print a space inside the brackets) counts as "(f)"
+          // (a line printed right at the top of the page, e.g. a question number at y 0.038, has its top edge a hair above TOP:
+          // the baseline decides then)
+          if ((top > TOP || base > TOP + 0.006) && (base < BOTTOM || (base < 0.95 && /Total for Question/i.test(it.str))) && x < RIGHT) items.push({ str: it.str.trim().replace(/^\*\s*(?=[(\d])/, '').replace(/^(\d{1,2})[.:]$/, '$1').replace(/^\(\s*([a-h]|[ivx]+)\s*\)/i, '($1)'), x, w: it.width / vp.width, base, top });
         }
-        if (!items.length) continue;
+        if (!items.length) {
+          graphicPages.add(n);
+          continue;
+        }
+        // "BLANK PAGE": nothing to crop on it (a part running over it continues on the next page)
+        if (items.length < 8 && items.some((i) => /^BLANK\s+PAGE$/i.test(i.str))) continue;
         items.sort((a, b) => a.top - b.top || a.x - b.x);
         pageTops[n] = Math.max(TOP, Math.min(...items.map((i) => i.top)) - PAD);
         const lines: { base: number; items: Item[] }[] = [];
@@ -656,10 +679,20 @@ export class QuestionCropsService {
         }
         for (const line of lines) {
           line.items.sort((a, b) => a.x - b.x);
+          // a label printed in pieces ("(" then "a)", or "(" then "b )") is one label
+          const joined: Item[] = [];
+          for (const i of line.items) {
+            const p = joined[joined.length - 1];
+            if (p && /\($/.test(p.str) && i.x - (p.x + p.w) < 0.012) {
+              joined[joined.length - 1] = { ...p, str: (p.str + i.str).replace(/^\(\s*([a-h]|[ivx]+)\s*\)/i, '($1)'), w: Math.max(p.w, i.x + i.w - p.x) };
+            } else joined.push(i);
+          }
+          line.items = joined;
           for (const i of line.items) if (/^\.{20,}$/.test(i.str)) dots.push(i.x + i.w);
           const text = line.items.map((i) => i.str).join(' ');
           const top = Math.min(...line.items.map((i) => i.top));
-          if (/^\(Total for Question/i.test(text)) {
+          // (some papers print it in pieces: "(T" + "otal for Question 3 = 2 marks)", so spaces are ignored)
+          if (/\(?Total\s*for\s*Question/i.test(text.replace(/\s+/g, ''))) {
             rights[n % 2].push(Math.max(...line.items.map((i) => i.x + i.w)));
             events.push({ page: n, y: top - PAD, kind: 'total', q: state.q });
             continue;
@@ -670,17 +703,19 @@ export class QuestionCropsService {
             // a question number only counts if it is the next one in order (graph-axis digits are not)
             if (/^\d{1,2}$/.test(it.str) && it.x < 0.14 && Number(it.str) === (state.q ? Number(state.q) + 1 : Number(it.str))) {
               state = { q: it.str, letter: null, roman: null };
+              numX = it.x;
               numberItem = it;
               lefts[n % 2].push(it.x);
               changed = true;
               continue;
             }
-            if (it.x < 0.13 || it.x >= 0.23 || !state.q) break;
+            const labelX0 = numX != null ? numX + 0.015 : 0.13;
+            if (it.x < labelX0 || it.x >= labelX0 + 0.1 || !state.q) break;
             let rest = it.str;
             let any = false;
             for (;;) {
               const lm = /^\(([a-h])\)(?:\s+|$)/.exec(rest);
-              if (lm && it.x < 0.2) {
+              if (lm && it.x < labelX0 + 0.07) {
                 state = { ...state, letter: lm[1], roman: null };
                 rest = rest.slice(lm[0].length);
                 any = true;
@@ -703,6 +738,7 @@ export class QuestionCropsService {
           const part =
             partByKey.get(partKey(state.q, state.letter, state.roman)) ??
             (state.roman ? undefined : partByKey.get(partKey(state.q, state.letter, null))) ??
+            (state.letter && !state.roman ? firstOfLetter.get(`${state.q}|${state.letter}`) : undefined) ??
             (!state.letter ? firstOfQ.get(state.q) : undefined);
           if (!part) continue;
           const last = [...events].reverse().find((e) => e.kind === 'start');
@@ -726,19 +762,31 @@ export class QuestionCropsService {
       const allR = [...rights[0], ...rights[1]];
       const edge = (p: number) => ({
         x0: (lefts[p % 2].length ? med(lefts[p % 2]) : allL.length ? med(allL) : X0 + 0.009) - 0.009,
-        x1: dots.length ? Math.max(...dots) + 0.006 : (rights[p % 2].length ? med(rights[p % 2]) : allR.length ? med(allR) : X1 - 0.025) + 0.025,
+        // (no dotted answer lines on the page, e.g. the "A" booklets: the standard right edge 0.9305 AFTER the page's sideways shift,
+        // not the median of the "(Total ...)" line ends, which is too far left and clips wide tables)
+        x1: dots.length ? Math.max(...dots) + 0.006 : 0.9305 - (offsets[p]?.dx ?? 0),
       });
 
+      // where this paper's pages normally start their text (a page whose first line is far lower has something above it)
+      const topVals = Object.values(pageTops).sort((a, b) => a - b);
+      const medTop = topVals.length ? topVals[Math.floor(topVals.length / 2)] : TOP;
       const plans = new Map<number, Plan>();
       for (let i = 0; i < events.length; i++) {
         const e = events[i];
         if (e.kind !== 'start') continue;
         const q = parsePart(e.part!.number)?.q;
-        const end = events.slice(i + 1).find((x) => x.kind === 'start' || (x.kind === 'total' && x.q === q)) ?? { page: doc.numPages, y: BOTTOM };
+        const realEnd = events.slice(i + 1).find((x) => x.kind === 'start' || (x.kind === 'total' && x.q === q));
+        const end = realEnd ?? { page: doc.numPages, y: BOTTOM };
         const crops: Plan['crops'] = [];
         for (let p = e.page; p <= end.page; p++) {
-          if (!(p in pageTops) && p !== e.page) continue;
-          const y0 = p === e.page ? e.y : pageTops[p];
+          // (a text-less page counts only BETWEEN this part and the next real start / total line: after the last part of the
+          // paper the empty pages that follow are not part of it)
+          if (!(p in pageTops) && !(graphicPages.has(p) && realEnd) && p !== e.page) continue;
+          // a later page of the part starts at the top margin, not at its first line of TEXT: a graph grid / figure at the
+          // top of the page has no text and would be lost
+          // (only when there is a real gap above that first line, 0.04+: otherwise the part ending at the very top of the page
+          // would get a useless sliver of margin)
+          const y0 = p === e.page ? e.y : pageTops[p] === undefined || pageTops[p] - medTop > 0.05 ? TOP : pageTops[p];
           const y1 = p === end.page ? end.y : BOTTOM;
           const o = offsets[p] ?? { dx: 0, dy: 0 };
           if (y1 - y0 > 0.02) crops.push({ page: p, box: { x0: round(edge(p).x0 + o.dx), y0: round(y0 + o.dy), x1: round(edge(p).x1 + o.dx), y1: round(y1 + o.dy) } });
@@ -812,7 +860,9 @@ export class QuestionCropsService {
     // page images for the ruled lines (scale 2 ≈ 150 dpi is plenty to find lines)
     const images = await renderPdfPagesAt(pdfBuf, Array.from({ length: doc.numPages }, (_, i) => i + 1), 2);
     try {
-      type Table = { x0: number; x1: number; head: { y0: number; y1: number } | null; top: number; bottom: number; snapUp: (y: number, limit?: number) => number | null };
+      // heads: the top of every header row on the page (a new table can start mid-page, e.g. after the MCQ block)
+      // pre: rows printed ABOVE the page's header (a row continued from the previous page), if any
+      type Table = { x0: number; x1: number; head: { y0: number; y1: number } | null; pre: { y0: number; y1: number } | null; heads: number[]; top: number; bottom: number; snapUp: (y: number, limit?: number) => number | null };
       type Ev = { page: number; kind: 'start' | 'total'; top: number; part?: Part; numberBox?: Rect };
       const events: Ev[] = [];
       const tables: Record<number, Table> = {};
@@ -824,9 +874,28 @@ export class QuestionCropsService {
         const items = await viewportItems(doc, n);
         const lines = linesOf(items);
         const R = await ruler(img);
-        const qLine = lines.find((l) => l.items.some((i) => /^Question$/i.test(i.str)));
-        const qItem = qLine?.items.find((i) => /^Question$/i.test(i.str));
-        const numLine = qLine && lines.find((l) => l.base > qLine.base && l.base - qLine.base < 0.04 && l.items.some((i) => /^Number$/i.test(i.str)));
+        // header row: "Question" over "Number" (or "Question Number" on one line); some papers' "Question" word is not
+        // in the text layer, so "Number" with "Answer" and "Mark" on the same row also counts
+        const isQ = (i: Item) => /^Question(\s+Number)?$/i.test(i.str);
+        const sameRow = (l: { base: number }, re: RegExp) => items.some((i) => re.test(i.str) && Math.abs(i.base - l.base) < 0.03);
+        const numberOnly = (l: { items: Item[]; base: number }) => l.items.some((i) => /^Number$/i.test(i.str)) && sameRow(l, /^Marks?$/i) && sameRow(l, /Answer/i);
+        // some papers print only "Question" (no "Number") over "Answer" and "Mark"
+        const questionOnly = (l: { items: Item[]; base: number }) => l.items.some((i) => /^Question$/i.test(i.str)) && sameRow(l, /^Marks?$/i) && sameRow(l, /Answer/i);
+        // ...or only "Acceptable Answers | Additional Guidance | Mark" (no "Question Number" words at all)
+        const guidanceOnly = (l: { items: Item[]; base: number }) => l.items.some((i) => /^(Acceptable\s+)?Answers?$/i.test(i.str)) && sameRow(l, /Guidance/i) && sameRow(l, /^Marks?$/i);
+        const isHeadLine = (l: { items: Item[]; base: number }) =>
+          (l.items.some(isQ) && (l.items.some((i) => /Number/i.test(i.str)) || lines.some((o) => o.base > l.base && o.base - l.base < 0.04 && o.items.some((i) => /^Number$/i.test(i.str))))) || numberOnly(l) || questionOnly(l) || guidanceOnly(l);
+        let qLine = lines.find((l) => l.items.some(isQ));
+        let qItem = qLine?.items.find(isQ);
+        let numLine = qLine && (/Number/i.test(qItem!.str) ? qLine : lines.find((l) => l.base > qLine!.base && l.base - qLine!.base < 0.04 && l.items.some((i) => /^Number$/i.test(i.str))));
+        if (!qLine || !numLine) {
+          const nl = lines.find(numberOnly) ?? lines.find(questionOnly) ?? lines.find(guidanceOnly);
+          if (nl) {
+            qLine = nl;
+            numLine = nl;
+            qItem = nl.items.find((i) => /^Number$/i.test(i.str)) ?? nl.items.find((i) => /^Question$/i.test(i.str)) ?? nl.items.find((i) => /^(Acceptable\s+)?Answers?$/i.test(i.str));
+          }
+        }
         // "Mark" is centred in the header row, often between the "Question" and "Number" lines
         const markItem = numLine && qLine ? items.filter((i) => /^Marks?$/i.test(i.str) && i.base > qLine.top - 0.01 && i.top < numLine.base + 0.01).sort((a, b) => b.x - a.x)[0] : undefined;
         let tx0: number, tx1: number, colX: number;
@@ -841,7 +910,9 @@ export class QuestionCropsService {
           while (xr < R.W - 2 && R.ink(xr + 1, yMid)) xr++;
           tx0 = xl / R.W;
           tx1 = (xr + 1) / R.W;
-          colX = qItem.x + 0.06;
+          // (a header that prints only "Acceptable Answers": that word already starts the answer column, so the number
+          // column ends just left of it)
+          colX = /^(Acceptable\s+)?Answers?$/i.test(qItem.str) ? qItem.x - 0.004 : qItem.x + 0.06;
         } else if (last) {
           ({ tx0, tx1, colX } = last);
         } else continue;
@@ -854,7 +925,8 @@ export class QuestionCropsService {
           return null;
         };
         if (numLine && markItem && qLine) {
-          const headTop = snapUp(qLine.top + 0.008, 0.04);
+          const hTop = Math.min(qLine.top, ...items.filter((i) => Math.abs(i.base - qLine!.base) < 0.03 && /Question|Number|Answer|Guidance|Marks?$/i.test(i.str)).map((i) => i.top));
+          const headTop = snapUp(hTop + 0.008, 0.04);
           const headBottom = snapDown(numLine.base);
           if (headTop == null || headBottom == null) continue;
           // a hair above the rule: some papers' header text sits right on it and was cut off
@@ -867,11 +939,32 @@ export class QuestionCropsService {
         last = { tx0, tx1, colX };
         let bottom = bodyTop;
         for (let y = Math.round(bodyTop * R.H) + 2; y < R.H * 0.97; y++) if (R.rule(y, tx0, tx1)) bottom = y / R.H;
-        tables[n] = { x0: round(tx0), x1: round(tx1), head, top: round(bodyTop), bottom: round(bottom), snapUp };
+        const heads: number[] = [];
+        for (const ql of lines) {
+          if (ql.base <= bodyTop + 0.002 || !isHeadLine(ql)) continue;
+          // a "Number" line just below an already counted "Question" line is the same header
+          if (heads.length && Math.abs(heads[heads.length - 1] - ql.top) < 0.05) continue;
+          // the header's highest word ("Acceptable Answers" / "Mark" can sit above "Number")
+          const hTop = Math.min(ql.top, ...items.filter((i) => Math.abs(i.base - ql.base) < 0.03 && /Question|Number|Answer|Guidance|Marks?$/i.test(i.str)).map((i) => i.top));
+          heads.push(round((snapUp(hTop + 0.004, 0.03) ?? hTop - 0.008) - 0.005));
+        }
+        // a continued row printed above the header: from the first rule on the page down to the header
+        let pre: Table['pre'] = null;
+        if (head) {
+          const first = snapDown(0.03, Math.max(0.01, head.y0 - 0.035));
+          // ...stopping above a "(Total for Question …)" line printed under the continued row
+          const total = lines.find((l) => first != null && l.top > first && l.base < head!.y0 && /Total for Question/i.test(l.text));
+          const preEnd = total ? total.top - 0.004 : head.y0 - 0.002;
+          if (first != null && preEnd - first > 0.02 && items.some((i) => i.top > first && i.base < preEnd && i.x > tx0 && i.x < tx1)) pre = { y0: round(first), y1: round(preEnd) };
+        }
+        tables[n] = { x0: round(tx0), x1: round(tx1), head, pre, heads, top: round(bodyTop), bottom: round(bottom), snapUp };
 
         for (const l of lines) {
-          if (l.base <= bodyTop + 0.002) continue;
-          if (/^\(?Total for Question/i.test(l.text)) {
+          // rows printed above the page's header (a continued row, or a NEW part's row when the header sits further down
+          // the page, e.g. above Q7) can start a part too
+          const inPre = !!pre && l.top >= pre.y0 - 0.002 && l.base <= pre.y1 + 0.002;
+          if (l.base <= bodyTop + 0.002 && !inPre) continue;
+          if (/^\(?Total\s*for\s*Question/i.test(l.text.replace(/\s+/g, ''))) {
             events.push({ page: n, kind: 'total', top: l.top });
             continue;
           }
@@ -901,7 +994,19 @@ export class QuestionCropsService {
           const t = tables[p];
           if (!t) continue;
           const y0 = p === e.page ? (t.snapUp(e.top + 0.004) ?? e.top - 0.006) : t.top;
-          const y1 = end && p === end.page ? (end.kind === 'total' ? (t.snapUp(end.top) ?? t.bottom) : (t.snapUp(end.top + 0.004) ?? end.top - 0.006)) : t.bottom;
+          let y1 = end && p === end.page ? (end.kind === 'total' ? (t.snapUp(end.top) ?? end.top - 0.004) : (t.snapUp(end.top + 0.004) ?? end.top - 0.006)) : t.bottom;
+          // never run into the next table's header row
+          for (const h of t.heads) if (h > y0 + 0.01 && h < y1) y1 = h;
+          // ...including the page's own header when it sits below this part's rows (rows above the header come first)
+          if (t.head && t.head.y0 > y0 + 0.01 && t.head.y0 < y1) y1 = round(t.head.y0 - 0.002);
+          // on a later page, the rows of this part printed above that page's header come first
+          // (but where the NEXT part starts inside that area, those rows are the next part's: stop at its start, or skip them)
+          let pre = t.pre;
+          if (pre && end && p === end.page) {
+            const cut = t.snapUp(end.top + 0.004) ?? end.top - 0.006;
+            if (cut < pre.y1) pre = cut - pre.y0 > 0.02 ? { y0: pre.y0, y1: round(cut) } : null;
+          }
+          if (p > e.page && pre) crops.push({ page: p, box: { x0: t.x0, y0: pre.y0, x1: t.x1, y1: pre.y1 } });
           if (y1 - y0 > 0.01) crops.push({ page: p, box: { x0: t.x0, y0: round(y0), x1: t.x1, y1: round(y1 + 0.0012) } });
         }
         if (!crops.length) continue;
@@ -994,7 +1099,9 @@ export class QuestionCropsService {
             if (str.trim() === '.') return true; // the dot of "2." (kept only next to a number: see below)
             const pn = parseNumber(str);
             if (pn) return pn.q === want.q;
-            return /^\(?[a-h]\)?$/i.test(str.trim()) || /^\(?(i{1,3}|iv|v|vi{1,3}|ix|x)\)?$/i.test(str.trim());
+            // "(a)", "(ii)" or a bare lower-case "a" / "ii": a bare capital A-D is an MCQ answer letter ("A is incorrect because"), kept
+            const t = str.trim();
+            return /^\([a-h]\)$/i.test(t) || /^[a-h]\)?$/.test(t) || /^\((i{1,3}|iv|v|vi{1,3}|ix|x)\)$/i.test(t) || /^(i{1,3}|iv|v|vi{1,3}|ix|x)\)?$/.test(t);
           };
           const cand = cache
             .get(c.page)!
@@ -1299,7 +1406,9 @@ async function cutQuestion(img: Buffer, box: CropBox): Promise<{ buf: Buffer; bo
   }
   const white = await Promise.all(
     groups
-      .filter((g) => g.b - g.a + 1 >= 4)
+      // only a band at the foot of the PAGE is the paper's border (it sits at page y ≈ 0.942-0.944): a table's own thick
+      // bottom border inside the crop must stay
+      .filter((g) => g.b - g.a + 1 >= 4 && box.y0 + (g.a / info.height) * (box.y1 - box.y0) >= 0.93)
       .map(async (g) => {
         const top = Math.max(0, g.a - 14);
         return { input: await sharp({ create: { width: info.width, height: g.b - top + 3, channels: 3, background: '#fff' } }).png().toBuffer(), left: 0, top };
@@ -1314,7 +1423,9 @@ async function cutQuestion(img: Buffer, box: CropBox): Promise<{ buf: Buffer; bo
     for (let x = Math.round(info.width * 0.05); x < info.width * 0.9; x++) if (data[y * info.width + x] < 200) d++;
     if (d > info.width * 0.85 * 0.8) headRule = y;
   }
-  if (headRule > 3) {
+  // (only a rule that really is near the TOP OF THE PAGE: a table's top border just under a stem line at the top of the
+  // crop is not one, and the stem above it must stay)
+  if (headRule > 3 && box.y0 + (headRule / info.height) * (box.y1 - box.y0) < 0.085) {
     let ink = false;
     for (let y = 0; y < headRule - 1 && !ink; y++) for (let x = 0; x < info.width; x++) if (data[y * info.width + x] < 200) { ink = true; break; }
     if (ink)

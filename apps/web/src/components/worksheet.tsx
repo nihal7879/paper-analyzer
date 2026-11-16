@@ -77,14 +77,27 @@ export function toWholeQuestions(items: BankEntry[]): WholeQuestion[] {
  * part: the server prints a worksheet in pieces and joins them — "cover" (the front cover alone, without the page
  * border/strip, like the real paper), "questions" (the question pages, no cover); none = everything (browser print).
  */
+/**
+ * The page design follows the boards of the selected questions: only AQA (and Oxford AQA) = AQA's page (square box,
+ * "Do not write outside the box", no hatched strip); one other board (Edexcel, IAL …) = the design it always had (rounded
+ * border + hatched side strip); a mix of boards = a plain simple border.
+ */
+export type PageTemplate = "default" | "aqa" | "mixed";
+export function templateFor(items: BankEntry[]): PageTemplate {
+  const boards = new Set(items.map((e) => (/aqa/i.test(`${e.meta.board} ${e.meta.curriculum}`) ? "aqa" : e.meta.board)));
+  if (boards.size > 1) return "mixed";
+  return boards.has("aqa") ? "aqa" : "default";
+}
+
 export function Worksheet({ items, title, answers, typed = false, part }: { items: BankEntry[]; title: string; answers: Mode; typed?: boolean; part?: string | null }) {
   const questions = toWholeQuestions(items);
+  const template = templateFor(items);
   // answer pages are always portrait like the question pages (past-paper rows are scaled to the page width)
   const msLandscape = false;
   const total = questions.reduce((s, q) => s + q.marks, 0);
 
   return (
-    <div className={msLandscape ? "ws-doc ws-landscape" : answers === "only" || part === "cover" ? "ws-doc ws-plain" : "ws-doc"}>
+    <div className={msLandscape ? "ws-doc ws-landscape" : answers === "only" || part === "cover" ? "ws-doc ws-plain" : `ws-doc ws-t-${template}`}>
       <style>{WORKSHEET_CSS}</style>
       {/* Answer pages look like the mark scheme: no page border or "do not write" strip */}
       {answers === "only" || part === "cover" ? (
@@ -93,7 +106,8 @@ export function Worksheet({ items, title, answers, typed = false, part }: { item
         <>
           {/* The paper's page design, repeated on every printed page: rounded border + hatched side strip */}
           <div className="ws-frame" aria-hidden />
-          <Strip />
+          {template === "aqa" && <div className="ws-note" aria-hidden>Do not write outside the box</div>}
+          {template === "default" && <Strip />}
         </>
       )}
 
@@ -158,7 +172,8 @@ function Cover({ title, questions, total }: { title: string; questions: WholeQue
   const metas = questions.map((q) => q.meta);
   const first = metas[0];
   const uniq = <T,>(xs: T[]) => [...new Set(xs)];
-  const level = (m: PaperMeta) => m.curriculum.split(/\s+/).filter((w) => !m.board.split(/\s+/).includes(w)).join(" ");
+  // "Edexcel A Level" -> "A Level"; IAL / Oxford AQA ("Edexcel International A Level") -> "A Level"
+  const level = (m: PaperMeta) => m.curriculum.split(/\s+/).filter((w) => !m.board.split(/\s+/).includes(w) && !["Edexcel", "AQA", "International"].includes(w)).join(" ");
   const boards = uniq(metas.map((m) => `${m.board} ${level(m)}`.trim()));
   const subjectNames = uniq(metas.map((m) => m.subjectName));
   const codes = uniq(metas.map((m) => m.subjectCode).filter(Boolean));
@@ -668,7 +683,7 @@ const LANDSCAPE_CSS = `
 
 const WORKSHEET_CSS = `
 @page { size: A4; margin: 7mm 2mm 14mm 10mm; }
-.ws-frame, .ws-strip { display: none; }
+.ws-frame, .ws-strip, .ws-note { display: none; }
 .ws-pages { border-collapse: collapse; width: 100%; }
 .ws-pages td { padding: 0; }
 .ws-doc { width: 190mm; margin: 0 auto; background: #fff; color: #000; font-family: "Times New Roman", Times, serif; font-size: 11pt; line-height: 1.35; }
@@ -761,5 +776,10 @@ const WORKSHEET_CSS = `
   /* answer pages: keep the text inside the page border */
   .ws-answers > h2, .ws-answers-head { margin-left: 4mm; margin-right: 5mm; }
   .ws-strip { display: block; position: fixed; top: 0; left: 189.5mm; width: 6.5mm; height: 271mm; pointer-events: none; }
+  /* AQA pages: a square box and "Do not write outside the box" at the top right, no hatched strip */
+  .ws-t-aqa .ws-frame { border-radius: 0; border-color: #4a4a4a; border-width: 0.3mm; }
+  .ws-t-aqa .ws-note { display: block; position: fixed; top: 0.8mm; left: 1.5mm; width: 186mm; box-sizing: border-box; padding-right: 3mm; text-align: right; font: italic 5.5pt Arial, Helvetica, sans-serif; color: #444; pointer-events: none; }
+  /* mixed boards: a plain simple border (no strip, no board-specific marks) */
+  .ws-t-mixed .ws-frame { border-radius: 0; border-color: #777; border-width: 0.3mm; }
 }
 `;

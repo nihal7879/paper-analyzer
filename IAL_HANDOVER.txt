@@ -1,0 +1,66 @@
+IAL CHEMISTRY HANDOVER - written 2026-11-08 about 14:40
+Another Claude window worked on IAL today. Read this before doing any IAL work.
+Only ONE window should work on IAL at a time.
+
+
+DO NOT REDO
+- The 74 missing IAL crops (26 papers) are already drawn and saved on dev. Do not redo them.
+  This includes all 28 mark-scheme crops of YCH11_s23_U3.
+  Recount after the fix: 131 papers, 5,453 parts, 0 missing QP crops, 0 missing MS crops, all new files on disk.
+  checks.mjs YCH11 reported 0 problems.
+- Box files are in D:/paper-analyzer-storage/claude-extractions/ (boxes-YCH11_*.json and boxes-ms-YCH11_*.json).
+- WARNING: a re-cut or re-import of those papers can lose these crops. Re-apply with:
+  cd D:/paper-analyzer-work, then node apply-boxes.mjs <slug>
+
+
+CURRENT STATUS (dev 122)
+Board          Papers  Read   Imported  Published on dev
+Edexcel        47      47     47        47
+IAL            131     131    131       0 (all IN_REVIEW)
+AQA            47      14     5         0
+Oxford AQA     65      0      0         0
+Prod has no Chemistry (restored 2026-11-05). Do not touch prod unless the user says so.
+AQA and Oxford AQA reading helpers are NOT running.
+
+
+REVIEW OF IAL CROPS - 14 of 131 confirmed reviewed
+Confirmed (every sheet displayed):
+  j20_U4, j21_U5, j25_U1, j26_U3, j26_U3A, j26_U4, j26_U4A,
+  s21_U6, s22_U2, s22_U3, s22_U4, s22_U5, w19_U2, w19_U3
+Batch 5 was still finishing when this was written (6 papers logged, not confirmed).
+Every other paper still needs review.
+
+Contact sheets: D:/paper-analyzer-work/chem/review/<slug>-qp-<n>.png and -ms-<n>.png (built 2026-11-08 BEFORE any crop-code fix.
+Rebuild with review-index.mjs and contact2.py after any re-cut.)
+What a good crop is: D:/paper-analyzer-work/chem/review-brief.md
+Findings (only what was really seen): D:/paper-analyzer-work/chem/review-findings-ial-1.txt to -5.txt
+Withdrawn, unverified lines, use only as hints: review-work-ial-2/UNVERIFIED-findings-before-cleanup.txt,
+  review-work-ial-4/unverified-drafts-log.txt, and the other review-work-ial-* folders.
+
+IMPORTANT: most image reads by the 5 reviewers failed with "media removed: request limit", and they logged papers they
+had not seen. Use only 2 helpers at a time, read at most 5 images per message, and confirm each image displayed before logging it.
+
+
+PROBLEMS FOUND, NOT FIXED
+1. SERIOUS: "A" papers. QP crops were cut from the blank Answer Book part of qp.pdf, so they show no question text.
+   Confirmed in j26_U3A (p14 onward, all 34 crops) and j26_U4A (p23 onward, 49 of 52).
+   Likely in all 12: j26_U1A to U6A and w25_U1A to U6A. Do not publish these as they are.
+2. Common, minor: a QP crop stops just above a table's bottom line, so the border is lost. Text is intact. Probably one crop-rule fix.
+3. Rare: a graph grid on the next page is lost (j20_U4 18(a)(ii)). A stem line blanked at the top of a crop (j20_U4 19(b)(i)).
+4. Mark schemes that misprint part labels, so old automatic crops may be on the wrong row. Check:
+   YCH11_s24_U2 18(b)(iii), (iv), (v) and YCH11_w25_U3A 3(b)(ii).
+5. YCH11_s25_U1 21(b)(i): the "(2)" mark is printed in the wrong column and may be hidden in the crop.
+6. Three boxes were nudged about 0.3% after their last visual check: w23_U5, w19_U1 (some) and the two in w25_U3A.
+7. Code gap: findMarkSchemeBoxes in apps/api/src/processing/question-crops.service.ts needs the word "Number" in the table
+   header. YCH11_s23_U3 prints only "Question", so a re-cut finds 0 MS parts. This was read from the code, not run.
+
+
+NEXT STEPS
+1. Check what is running first.
+2. ASK THE USER before changing crop code or re-cutting. The user has not answered this yet.
+   Recommended: fix the "A" papers and the table bottom-line rule first, then re-cut those on dev, re-apply box files,
+   rebuild contact sheets, so the remaining papers are not reviewed twice.
+3. Review the remaining papers, fix what is really wrong, run checks.mjs YCH11.
+4. Publish on dev. Restarting the API with SKIP_SIMILAR_ON_PUBLISH=1 makes this faster. The user restarts the API, so ask.
+5. Similar-questions rebuild.
+6. Do not go to prod until the user says so.

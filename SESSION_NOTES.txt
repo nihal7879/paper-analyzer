@@ -1,0 +1,92 @@
+PAPER ANALYZER - SESSION HANDOVER NOTES
+Written 2026-11-08, from the old session 04492b8b (it grew to 412 MB and kept giving API errors).
+The last full summary in that log is from 2026-10-31. Later items come from its messages up to 2026-11-08.
+The exact state of the Chemistry import is NOT known. Check it first (see section 4).
+
+
+1. STANDING RULES (from the user)
+- "please dont do anything ask first": explain the plan and wait for a yes before changing files, .env, DB or servers.
+- "ask only" means answer only. Do not act.
+- Never write to the production DB (195.250.20.169) unless the user says yes for that specific change.
+- Only touch the paper_analyzer DB.
+- AI keys only in .env. Use Claude Code (subscription plan), not the paid API key.
+- The user restarts servers. Ask first.
+- Do not paste or echo passwords. The DB password was shared in chat earlier and should be changed.
+- Keep answers in simple English.
+
+
+2. PROJECT
+- NestJS API in apps/api (port 4100, served from dist). React + Vite web in apps/web (port 3000).
+- Dev DB: paper_analyzer on 122.170.99.55 ("122 dev database"), from apps/api/.env.
+- Prod DB and server: 195.250.20.169 ("shastra"). Site: https://paperanalyzer.millicenttechnologies.com/
+- Local storage: D:/paper-analyzer-storage. Work scripts: D:/paper-analyzer-work.
+- Build: use "npx tsc -p tsconfig.build.json". nest build clears dist and ran out of memory.
+
+Deploy
+- Release zip layout: api/{dist,db,package.json,package-lock.json} and web/dist. No .env. Forward-slash paths.
+  Make it with D:/paper-analyzer-work/make-release-zip.py (not PowerShell 5.1, which writes backslash paths).
+- Upload the zip to /home/nihal_shaikh/paper-analyzer/inbox, then: ssh nihal_shaikh@195.250.20.169 paper deploy
+- Server commands: ssh nihal_shaikh@195.250.20.169 paper <status | logs [n] | restart | deploy | import | crops | help>
+  Office network only. SFTP plus "paper" commands, no shell.
+- Server storage: /srv/apps/paper-analyzer/storage
+- Pictures are uploaded with WinSCP Synchronize. Direction must be "Remote" and "Delete files" must be UNTICKED.
+  A red X in the preview means delete. Cancel if you see it.
+
+Work scripts (D:/paper-analyzer-work)
+- Publishing: pub-slow.mjs, checks.mjs, clean.mjs, status.mjs
+- DB: sync-db.mjs (backup / copy / restore), compare-db.mjs
+- Chemistry work is in the chem folder (last changed 2026-11-08 12:12).
+- paper.txt: the paper-processing steps, written for the client.
+
+Publishing speed
+- Setting SKIP_SIMILAR_ON_PUBLISH=1 before starting the API skips the slow similar-questions rebuild on each publish.
+  Run the rebuild once after a board is finished.
+
+
+3. WHERE THINGS STOOD
+
+Prod (195)
+- On 2026-11-05 the user asked to revert prod, and it was restored to before the Chemistry copy:
+  378 papers, 11,721 questions, 12 subjects, 0 Edexcel Chemistry. Only Physics, KS3 and Maths are live.
+- Backups on the laptop, in D:/paper-analyzer-work:
+    remote-backup-20261105-1132      prod before the Chemistry copy (this is what was restored)
+    remote-backup-20261105-with-chem prod with Edexcel Chemistry
+- Latest release zip made: paper-analyzer-dist-20261105.zip
+
+Chemistry on dev (122) - 291 papers, board order Edexcel, IAL, AQA, Oxford AQA
+- Edexcel (8CH0 / 9CH0, 47 papers): imported and published on dev. Pictures: 4,982 files present locally.
+- UPDATE 2026-11-08 13:43: no import workers or helpers are running. The import queue finished at 13:04:50 and
+  chem/import.log shows all 183 papers it covers with a final result of OK. This comes from the log, not the DB.
+- IAL (131 papers, 5,453 parts): import finished, all IN_REVIEW on dev. The 74 missing crops (26 papers) were drawn by hand
+  on 2026-11-08 and saved in boxes-*.json in claude-extractions. NEXT: contact-sheet review, fixes, final checks, publish on dev.
+  To check in review: YCH11_s24_U2 18(b)(iii)(iv)(v) and YCH11_w25_U3A 3(b)(ii). Their mark schemes misprint part labels,
+  so the automatic crops may be on the wrong row.
+  Code gap: findMarkSchemeBoxes in question-crops.service.ts needs the word "Number" in the table header. YCH11_s23_U3 prints only
+  "Question", so a re-cut of that paper finds 0 mark-scheme parts again. Re-apply its boxes file after any re-cut.
+- AQA (47 papers): first batch of 5 AS Paper 1 imported per the log (7404_x14_1 needed a redo).
+  Reading helpers STOPPED. Last helper work was 11:39 today, in chem/agent-7404_s20_1 (drafts for 7404 s22, s23, s24).
+  Remaining batches must be restarted: finish AS Paper 1 2020-2024 and A Level Paper 1.
+  AQA and Oxford AQA crops come from the helpers' boxes, not the automatic cutter, because of "0 1 . 2" numbering.
+- Oxford AQA (subject 9620, 65 papers): subject, topics, paper list and brief are ready. Not started.
+
+Plan the user agreed to on 2026-11-08 ("continue deploy and publish paper of this chem till dont wait")
+1. IAL: finish import, count check, missing crops, review, fixes, final checks, publish on dev.
+2. AQA: read the rest, import with boxes, check, fix, publish on dev.
+3. Oxford AQA: the same.
+4. Similar-questions rebuild after each board.
+5. New release build with the latest code.
+6. Ask ONE yes/no before copying all Chemistry to prod, uploading pictures and deploying.
+
+Other open items
+- Requested on 2026-11-04: curriculum order Edexcel, IAL, AQA, Oxford AQA; sort by difficulty and marks; multi-select
+  filters; "View in exam paper" and "Full paper" labels. Check each is finished. apps/web/src/components/sort-menu.tsx is new.
+- WebP was discussed for storage savings. Check what was actually decided before converting anything.
+- IAL s19_U1 needs the correct mark scheme.
+- Optional: sample-check diagram crops for the other boards.
+
+
+4. FIRST THINGS TO DO IN THE NEW SESSION
+- Do not assume background jobs are running. Check for running node processes first.
+- Check the API is up on port 4100 and dev DB 122.170.99.55 is reachable (ENETUNREACH was seen on 2026-11-04).
+- Run the status script in D:/paper-analyzer-work to get the real count per board, and tell the user before continuing.
+- Git has uncommitted changes in apps/api and apps/web. Do not discard them.
