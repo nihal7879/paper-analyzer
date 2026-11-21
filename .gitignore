@@ -5,3 +5,10 @@ dist/
 *.log
 *.tsbuildinfo
 coverage/
+
+# client data and local junk
+backups/
+*.sql
+*.bak*
+.env.*
+!.env.example

@@ -1,0 +1,95 @@
+PAPER ANALYZER - QA CHECKLIST BEFORE ANY UPLOAD / PUBLISH / DEPLOY
+Written 2026-11-18 after teachers found problems in downloaded PDFs. Every item below happened at least once.
+RULE: run ALL checks, look at real PDFs, and fix every real flag BEFORE publishing, uploading pictures or deploying.
+Scripts are in D:/paper-analyzer-work/chem (tools/ = helpers). Never trust "imported OK" alone.
+
+
+A. PROBLEMS THAT ALREADY HAPPENED (check every one, every time)
+
+ 1. QUESTION MISSING, ONLY ANSWER BOXES SHOWN ("A" papers: question booklet + separate answer book).
+    Crops were cut from the blank answer book (empty lines, "A B C D" boxes) instead of the question booklet.
+    CHECK: no QP crop page may be at or after the answer-book cover ("Please check the examination details" on a page > 1).
+            node tools/apaper.mjs  (IAL Physics) - adapt the slug pattern for Chemistry / other boards.
+    FIX:   re-cut with the current cutter (dist/cli/question-crops.js, PAPER_ANALYZER_OFFLINE=1); it stops at the answer book.
+            Do NOT re-apply old QP box files that point at answer-book pages.
+
+ 2. SAME QUESTION SHOWN TWICE / STEM OR FIGURE REPEATED.
+    A later part's crop started at the question top, an earlier part's crop ran over the next part, or a part had an
+    extra region copying an earlier part's stem/figure (the PDF always prints the WHOLE question now, so it repeats).
+    CHECK: node tools/scan-overlap.mjs [slug-pattern]   -> must be 0 (or only checked, intended cases)
+    FIX:   node tools/fix-overlap.mjs [--apply] <slug prefixes>
+
+ 3. DOUBLE QUESTION NUMBER (our "2" next to the paper's "4:", or our number printed ON the AQA box "0 24. 5").
+    Printed numbers like "4:" were never erased; KS3 numbers are not erased; AQA box numbers were overwritten.
+    CHECK: scan-overlap.mjs reports "number still printed"; look at PDFs with 10+ questions (two-digit numbers).
+    FIX:   node tools/fix-colon-num.mjs --apply (white patch over the printed number).
+            AQA / Oxford AQA keep the paper's OWN numbers everywhere (code, isPaperNumbered): never overlay ours.
+
+ 4. DOUBLED "Total for Question" LINE (paper's own line inside the crop + ours).
+    CHECK: node tools/scan-all.mjs  -> total-in-crop must be 0.   FIX: node tools/trim-total.mjs --apply
+
+ 5. DOUBLE PAGE BORDER (the paper's own border line inside the crop next to our frame) - AQA-family pages.
+    CHECK: zoom into the left/right edge of a PDF page.   FIX: node tools/edge-detect.mjs --apply <prefixes> (box.edge)
+
+ 6. CUT-OFF TEXT: "[3 marks" without "]", last answer line missing, MCQ option D outside the crop, stem line outside.
+    CHECK: node aqa-gate.mjs --file <slugs> (AQA/Oxford) / autocheck.mjs (Edexcel/IAL).   FIX: aqa-fix.mjs, box files.
+
+ 7. MARK SCHEME CROPS: repeated header row, "Total" row, the next part's row, a thin sliver of a tall row, a missing crop.
+    CHECK: aqa-gate.mjs / autocheck.mjs.  Some mark schemes genuinely miss a row (e.g. 7405_s17_1 10(c)): note it.
+
+ 8. MORE THAN 4 REGIONS PER PART -> the API refuses the crop silently in the log ("Too big: expected array to have <=4").
+    CHECK: grep the import / apply logs for "400", "failed", "no question".
+
+ 9. OUT-OF-MEMORY DURING IMPORT ("Create skia surface failed", "vips_tracked: out of memory") -> parts saved with no crop.
+    CHECK: grep logs for "memory", "skia", "saved 0 of". Use import-oxf2.sh style scripts (wait for free memory).
+
+10. BAD SOURCE FILES: a mark scheme that is a copy of the question paper (same MD5), wrong year/season, mismatching units.
+    CHECK before reading/importing. Never invent answers: "Mark scheme not available yet." (e.g. 9620_s19_5).
+
+11. TOPIC PDF MISSING PARTS / DIAGRAMS: only matching parts were downloaded. Code now always takes the WHOLE question
+    (question-card pickIds + bank-search ids()). Re-check after any change to selection / search code.
+
+
+12. MATHS MARK SCHEMES CUT WRONG (Edexcel 8MA0/9MA0, 2026-11-19): header "Question | Scheme | Marks | AOs" (no "Answer"),
+    later parts printed as bare "(b)" / "(ii)" / "4a" / "b", a NOTES section under every table that repeats "(a)", "1a"
+    and has stray formula digits in the number column, two labels in one ruled cell, the last question's notes running
+    over the next pages. All handled in question-crops.service.ts (maths tables only). Result if broken: a part with no
+    MS crop, or another question's rows.
+    CHECK: node tools/regions.mjs <slug>  (every part has QP+MS crops; MS crops in question order) - part of math-gate.sh.
+13. A PART WITH 5+ CROP REGIONS (a maths question running over 5 pages): prints fine, but an admin "save crop" of that
+    part is refused (max 4). regions.mjs lists them.
+14. ONE GATE FOR NEW PAPERS: D:/paper-analyzer-work/math/math-gate.sh <slugs> = import + cut + every check above
+    (memory guard, crops for every part, MS order, autocheck, overlap, number, total, duplicate number).
+    Only "GATE <slug> OK" papers go on; "CHECK:" lines are fixed and re-gated.
+15. CROP OF THE WRONG QUESTION: a paper whose second section restarts at question 1 (Edexcel Specimen Stats & Mech),
+    a scanned QP (no text layer) or a font-garbled QP (Sample papers): the cutter matches the wrong printed number or
+    finds nothing. CHECK: python -I D:/paper-analyzer-work/math/pagecheck.py <slug> (first QP crop must be on the
+    part's own page) - part of math-gate.sh. FIX: hand boxes (math/box-brief.md); the gate re-applies them.
+16. SEASON CODE: only j/m/s/w/x exist. Sample Assessment Materials = x (year 2017), Specimen = x (year 2016).
+17. DOUBLE NUMBER / WRONG "Question n continued" ON SCANNED OR FONT-GARBLED PAPERS: the printed number and heading can't
+    be erased from text, so ours printed on top ("2" over "12."). FIX: math/cover-num.py --apply <slug> measures them
+    from the page image (white patch under ours); math-gate.sh runs it for the slugs in math/unreadable.txt.
+    CHECK: look at the top-left of each question and continued page in a PDF.
+18. PUBLISH REFUSED "has (i) but no (a)" / "12(ii)(a) has no question number": maths numbering 2(i), 2(ii) and
+    12(ii)(a) is valid; paper-checks.ts accepts it (since 2026-11-19).
+
+B. CHECKS TO RUN BEFORE PUBLISHING A BOARD (all must be clean or explained)
+   - checks.mjs <code>          (counts, missing crops)
+   - aqa-gate.mjs / autocheck.mjs on every paper of the board
+   - scan-all.mjs, scan-overlap.mjs, apaper check for "A" papers
+   - LOOK at real PDFs (Original paper AND System generated), from the website flow a teacher uses:
+       * one question alone, * a topic search with 30+ questions (two-digit numbers), * a mixed-board selection,
+       * answers at the end. Check: question text present, figures, answer lines, one number per question,
+         totals once, borders single, mark scheme numbers match the question numbers.
+
+
+C. PRODUCTION (195) - ORDER AND SAFETY
+   1. Never write to production without the user's explicit yes for that change. Take a fresh backup first
+      (sync-db.mjs backup remote-backup-<date>).
+   2. Pictures first (staging folder with ONLY the changed/new files; WinSCP: Remote, "New and updated" ticked,
+      "Delete files" UNticked; check the preview counts before Synchronize).
+   3. Then the database (tools/prod-sync.mjs: dry run first; matches crops by FILE NAME and only changes a crop whose
+      production box is still the original - an admin's manual fix on production is never overwritten).
+   4. Then deploy the release zip (paper deploy). Verify the live index-*.js name matches the new build.
+   5. Re-cut papers (new picture names) need their own sync: replace that paper's crops + upload all its new pictures.
+   6. Verify on the LIVE site with real PDFs (topic search, single question, AQA multi-question) after every deploy.

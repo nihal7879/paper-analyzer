@@ -1,0 +1,272 @@
+import { Download, FileDown, FileText, Loader2, Trash2, X } from "lucide-react";
+import { useState } from "react";
+import { toast } from "sonner";
+import { Segmented } from "@/components/segmented";
+import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { downloadPdf, originalPdfUrl, pdfParams, sourceLine, type PaperMeta, type PdfRequest } from "@/lib/api";
+import type { BankEntry } from "@/lib/question-bank";
+import { groupKeyOf } from "@/lib/question-bank";
+import { selection } from "@/lib/selection";
+import { cn } from "@/lib/utils";
+
+/** In this dialog the chosen option is filled in, so it is obvious which one is selected. */
+const PICKED = "bg-primary text-primary-foreground shadow-sm hover:text-primary-foreground";
+
+/** The teacher chooses each time: no answers, answers at the end of the worksheet, or a separate answer sheet. */
+type AnswerChoice = "none" | "end" | "separate";
+const ANSWER_OPTIONS: { value: AnswerChoice; label: React.ReactNode; activeClassName?: string }[] = [
+  { value: "none", label: "No answers", activeClassName: PICKED },
+  { value: "end", label: <><span className="lg:hidden">At the end</span><span className="hidden lg:inline">Answers at end</span></>, activeClassName: PICKED },
+  { value: "separate", label: <><span className="lg:hidden">Separate</span><span className="hidden lg:inline">Separate answer sheet</span></>, activeClassName: PICKED },
+];
+
+/**
+ * Every download is in the past-paper style (the original paper's crops, border and side strip). The typed
+ * "normal" layout still exists in the print page (and is used for any question without a crop); the dialog's
+ * Format choice was removed for now.
+ */
+const PDF_STYLE = "paper" as const;
+
+/**
+ * Two versions of every download: "Original paper" (the paper's own cut-out pictures) or "System generated" (our clean typed
+ * layout: text and formulas typed, diagrams from the saved images, numbers / marks / answer lines styled like the paper).
+ * The teacher's last choice is remembered on this device.
+ */
+type FormatChoice = "paper" | "normal";
+const FORMAT_OPTIONS: { value: FormatChoice; label: React.ReactNode; activeClassName?: string }[] = [
+  { value: "paper", label: "Original paper", activeClassName: PICKED },
+  { value: "normal", label: "System generated", activeClassName: PICKED },
+];
+const FORMAT_KEY = "pa.pdfFormat";
+function rememberedFormat(): FormatChoice {
+  try {
+    return localStorage.getItem(FORMAT_KEY) === "normal" ? "normal" : PDF_STYLE;
+  } catch {
+    return PDF_STYLE;
+  }
+}
+
+/** Server PDF; if the server can't make it, open the print page so the browser can save it as PDF. */
+async function runPdf(req: PdfRequest, fileName: string) {
+  const big = (req.ids?.length ?? 0) > 60;
+  const id = toast.loading(big ? `Preparing your PDF (${req.ids!.length} parts): large selections can take up to a minute…` : "Preparing your PDF…");
+  try {
+    await downloadPdf(req, fileName);
+    toast.success("PDF downloaded", { id });
+  } catch (e) {
+    toast.error(`${e instanceof Error ? e.message : "PDF failed"} · opening the print view instead`, { id });
+    window.open(`/print?${pdfParams(req)}&print=1`, "_blank", "noopener");
+  }
+}
+
+function safeName(s: string) {
+  return s.replace(/[\\/:*?"<>|]+/g, "").replace(/\s+/g, " ").trim().slice(0, 120) || "questions";
+}
+
+// ---------------------------------------------------------------- whole paper
+
+export function PaperDownloadMenu({ meta, children, className }: { meta: PaperMeta; children: React.ReactNode; className?: string }) {
+  const [open, setOpen] = useState(false);
+  const item = "flex w-full items-center gap-2.5 rounded-md px-2 py-2.5 text-left text-sm transition-colors hover:bg-muted lg:py-2";
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger
+        className={cn(
+          "flex h-8 items-center gap-1.5 rounded-md px-2 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground active:scale-95 data-popup-open:bg-muted lg:h-auto lg:py-1",
+          className,
+        )}
+        title="Download the original question paper / mark scheme"
+      >
+        {children}
+      </PopoverTrigger>
+      <PopoverContent align="end" className="w-64 gap-0.5 p-1.5">
+        <p className="px-2 pt-1 pb-1.5 text-xs font-semibold text-muted-foreground">{sourceLine(meta)}</p>
+        {/* The original PDFs only (the rebuilt whole-paper downloads were removed) */}
+        <a className={item} href={originalPdfUrl(meta.id, "qp")} target="_blank" rel="noreferrer" onClick={() => setOpen(false)}>
+          <FileText className="size-4 text-primary" /> Question paper (original PDF)
+        </a>
+        {meta.msFileName && (
+          <a className={item} href={originalPdfUrl(meta.id, "ms")} target="_blank" rel="noreferrer" onClick={() => setOpen(false)}>
+            <FileText className="size-4 text-primary" /> Mark scheme (original PDF)
+          </a>
+        )}
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+// ---------------------------------------------------------------- selection
+
+/** Floating bar at the bottom while questions are selected. */
+export function SelectionBar({ ids, byId }: { ids: string[]; byId: Map<string, BankEntry> }) {
+  const [open, setOpen] = useState(false);
+  const picked = ids.flatMap((id) => byId.get(id) ?? []);
+  const visible = picked.length > 0;
+  const wholeQuestions = new Set(picked.map(groupKeyOf)).size;
+
+  return (
+    <>
+      <div
+        className={cn(
+          "pointer-events-none fixed inset-x-0 bottom-[max(2.5rem,calc(env(safe-area-inset-bottom)+1.5rem))] z-30 flex justify-center px-4 transition-[transform,opacity] duration-300 ease-out",
+          visible ? "translate-y-0 opacity-100" : "translate-y-6 opacity-0",
+        )}
+        aria-hidden={!visible}
+        inert={!visible}
+      >
+        <div className="pointer-events-auto flex w-full max-w-xl items-center gap-2 rounded-2xl border bg-popover p-2 pl-4 shadow-lg ring-1 ring-foreground/5 lg:bg-popover/95 lg:backdrop-blur">
+          <p className="mr-auto min-w-0 text-sm">
+            <span className="font-semibold">{wholeQuestions}</span> selected
+          </p>
+          <Button variant="ghost" size="sm" onClick={() => selection.clear()} className="text-muted-foreground">
+            Clear
+          </Button>
+          <Button size="sm" className="gap-1.5" onClick={() => setOpen(true)}>
+            <Download className="size-4" /> Download PDF
+          </Button>
+        </div>
+      </div>
+      <SelectionDialog open={open} onOpenChange={setOpen} picked={picked} />
+    </>
+  );
+}
+
+/**
+ * Inline "selected for PDF" strip (e.g. under the header of the similar-questions page): the last few picks as
+ * removable chips, "+N more", Clear and Download PDF. Questions in `highlight` (the ones on this page) stand out.
+ */
+export function SelectionStrip({ ids, byId, highlight, className }: { ids: string[]; byId: Map<string, BankEntry>; highlight?: Set<string>; className?: string }) {
+  const [open, setOpen] = useState(false);
+  const picked = ids.flatMap((id) => byId.get(id) ?? []);
+  if (picked.length === 0) return null;
+  const MAX_CHIPS = 4;
+  const recent = picked.slice(-MAX_CHIPS).reverse();
+  const more = picked.length - recent.length;
+  const short = (e: BankEntry) => `${e.meta.seasonName} ${e.meta.year} · Q${e.question.number}`;
+
+  return (
+    <div className={cn("enter-up flex flex-wrap items-center gap-2 rounded-xl border border-primary/25 bg-primary/5 px-3 py-2", className)}>
+      <span className="flex items-center gap-1.5 text-sm font-medium">
+        <FileDown className="size-4 text-primary" />
+        {picked.length} selected for PDF
+      </span>
+      <span className="flex min-w-0 flex-wrap items-center gap-1.5">
+        {recent.map((e) => (
+          <button
+            key={e.key}
+            type="button"
+            onClick={() => selection.toggle(e.question.id)}
+            title="Remove from PDF"
+            className={cn(
+              "flex items-center gap-1 rounded-full border bg-background py-1 pr-1.5 pl-2.5 text-xs transition-colors hover:border-destructive/40 hover:text-destructive",
+              highlight?.has(e.question.id) && "border-primary/40 text-primary",
+            )}
+          >
+            {short(e)}
+            <X className="size-3" />
+          </button>
+        ))}
+        {more > 0 && (
+          <button type="button" onClick={() => setOpen(true)} className="rounded-full px-2 py-1 text-xs font-medium text-primary hover:underline">
+            +{more} more
+          </button>
+        )}
+      </span>
+      <span className="ml-auto flex items-center gap-1">
+        <Button variant="ghost" size="sm" onClick={() => selection.clear()} className="text-muted-foreground">
+          Clear
+        </Button>
+        <Button size="sm" className="gap-1.5" onClick={() => setOpen(true)}>
+          <Download className="size-4" /> Download PDF
+        </Button>
+      </span>
+      <SelectionDialog open={open} onOpenChange={setOpen} picked={picked} />
+    </div>
+  );
+}
+
+function SelectionDialog({ open, onOpenChange, picked }: { open: boolean; onOpenChange: (o: boolean) => void; picked: BankEntry[] }) {
+  const subjects = [...new Set(picked.map((e) => e.meta.subjectName))];
+  const [title, setTitle] = useState("");
+  const [answers, setAnswers] = useState<AnswerChoice>("end");
+  const [style, setStyleState] = useState<FormatChoice>(rememberedFormat);
+  const setStyle = (v: FormatChoice) => {
+    setStyleState(v);
+    try {
+      localStorage.setItem(FORMAT_KEY, v);
+    } catch {
+      // private mode
+    }
+  };
+  const [busy, setBusy] = useState(false);
+  // whole questions (parts of one question count once), the same count as the selection bar
+  const wholeCount = new Set(picked.map(groupKeyOf)).size;
+  const defaultTitle = `${subjects.length === 1 ? subjects[0] : "Practice"} questions`;
+
+  async function download() {
+    setBusy(true);
+    const t = title.trim() || defaultTitle;
+    const ids = picked.map((e) => e.question.id);
+    // Separate answer sheet: the worksheet without answers, then the answers as their own PDF
+    // the PDF shows a title only if the teacher typed one (the file name always has one)
+    const shown = title.trim() || undefined;
+    await runPdf({ ids, answers: answers === "separate" ? "none" : answers, title: shown, style }, safeName(t));
+    if (answers === "separate") await runPdf({ ids, answers: "only", title: shown, style }, safeName(`${t} - Answers`));
+    setBusy(false);
+    onOpenChange(false);
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      {/* Touch: don't focus the title box on open (it would pop up the keyboard); mouse/keyboard: as before */}
+      <DialogContent className="max-h-[96dvh] gap-4 overflow-y-auto sm:max-w-lg" initialFocus={(type) => type !== "touch"}>
+        <DialogHeader>
+          <DialogTitle>Download PDF</DialogTitle>
+          <DialogDescription>
+            {wholeCount} question{wholeCount === 1 ? "" : "s"}, in the order you added them.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="grid gap-2">
+          <Label htmlFor="pdf-title">Title</Label>
+          <Input id="pdf-title" className="text-base sm:text-sm" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Optional — e.g. Projectile motion" />
+        </div>
+        <div className="grid gap-2">
+          <Label>Format</Label>
+          <Segmented value={style} onChange={setStyle} options={FORMAT_OPTIONS} aria-label="Format" className="sm:w-full [&>button]:flex-1" />
+        </div>
+        <div className="grid gap-2">
+          <Label>Answers</Label>
+          <Segmented value={answers} onChange={setAnswers} options={ANSWER_OPTIONS} aria-label="Answers" className="sm:w-full [&>button]:flex-1" />
+        </div>
+
+        <ul className="grid max-h-[max(12rem,calc(96dvh-23rem))] gap-1 overflow-y-auto rounded-lg border p-1">
+          {picked.map((e, i) => (
+            <li key={e.key} className="flex items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-muted">
+              <span className="w-5 text-right text-xs text-muted-foreground tabular-nums">{i + 1}</span>
+              <span className="min-w-0 flex-1 truncate">{sourceLine(e.meta, e.question.number)}</span>
+              <span className="text-xs text-muted-foreground">{e.question.marks ?? "–"}m</span>
+              <button type="button" onClick={() => selection.toggle(e.question.id)} className="rounded p-0.5 text-muted-foreground hover:text-destructive" title="Remove">
+                <X className="size-3.5" />
+              </button>
+            </li>
+          ))}
+        </ul>
+
+        <DialogFooter className="gap-2 sm:justify-between">
+          <Button variant="ghost" className="gap-1.5 text-muted-foreground" onClick={() => { selection.clear(); onOpenChange(false); }}>
+            <Trash2 className="size-4" /> Clear selection
+          </Button>
+          <Button onClick={download} disabled={busy || picked.length === 0} className="gap-1.5">
+            {busy ? <Loader2 className="size-4 animate-spin" /> : <Download className="size-4" />}
+            {busy ? "Preparing…" : "Download PDF"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
