@@ -7,7 +7,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { downloadPdf, originalPdfUrl, pdfParams, sourceLine, type PaperMeta, type PdfRequest } from "@/lib/api";
+import { downloadPdf, originalPdfUrl, PdfError, printPageUrl, sourceLine, type PaperMeta, type PdfRequest } from "@/lib/api";
 import type { BankEntry } from "@/lib/question-bank";
 import { groupKeyOf } from "@/lib/question-bank";
 import { selection } from "@/lib/selection";
@@ -50,16 +50,26 @@ function rememberedFormat(): FormatChoice {
   }
 }
 
-/** Server PDF; if the server can't make it, open the print page so the browser can save it as PDF. */
+/**
+ * Server PDF, made in the background with progress. If the server can't make it, the message offers a button that
+ * opens the print page (the browser then saves it as PDF). A real click is needed: a tab opened by the page itself
+ * after waiting is blocked by the browser as a popup.
+ */
 async function runPdf(req: PdfRequest, fileName: string) {
-  const big = (req.ids?.length ?? 0) > 60;
-  const id = toast.loading(big ? `Preparing your PDF (${req.ids!.length} parts): large selections can take up to a minute…` : "Preparing your PDF…");
+  const n = req.ids?.length ?? 0;
+  const id = toast.loading(n > 60 ? `Preparing your PDF (${n} parts)…` : "Preparing your PDF…");
   try {
-    await downloadPdf(req, fileName);
+    await downloadPdf(req, fileName, (message, percent) =>
+      toast.loading(n > 60 && percent > 0 && percent < 100 ? `${message} (${n} parts)` : message, { id }),
+    );
     toast.success("PDF downloaded", { id });
   } catch (e) {
-    toast.error(`${e instanceof Error ? e.message : "PDF failed"} · opening the print view instead`, { id });
-    window.open(`/print?${pdfParams(req)}&print=1`, "_blank", "noopener");
+    const job = e instanceof PdfError ? e.job : null;
+    toast.error(`${e instanceof Error ? e.message : "PDF failed"}. You can open the print view and choose "Save as PDF".`, {
+      id,
+      duration: Infinity,
+      action: { label: "Click here to open", onClick: () => window.open(printPageUrl(req, job), "_blank", "noopener") },
+    });
   }
 }
 

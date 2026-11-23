@@ -405,29 +405,72 @@ export function pdfParams(r: PdfRequest): URLSearchParams {
   return p;
 }
 
-/**
- * The server renders the print page in Chrome and keeps the PDF under a token; the browser then downloads it
- * with a plain link, so the file goes straight to disk. (Reading a big PDF into the page's memory first fails
- * in Chrome when the disk is nearly full: "Failed to fetch".) The ids go in the body, so any selection size works.
- */
-export async function downloadPdf(r: PdfRequest, fileName: string): Promise<void> {
-  let res: Response;
-  try {
-    res = await fetch(`${API_URL}/api/bank/pdf`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ...r, fileName: fileName.replace(/\.pdf$/i, "") }),
-    });
-  } catch {
-    throw new ApiError("Cannot reach the API server. Is it running?", 0);
+/** A PDF the server could not make; `job` (when the job was started) lets the print page load the same selection. */
+export class PdfError extends ApiError {
+  readonly job: string | null;
+
+  constructor(message: string, status: number, job: string | null) {
+    super(message, status);
+    this.job = job;
   }
-  const body = await res.json().catch(() => null);
-  if (!res.ok || !body?.token) throw new ApiError(body?.message || `PDF failed (${res.status})`, res.status);
-  const a = document.createElement("a");
-  a.href = `${API_URL}/api/bank/pdf/file/${encodeURIComponent(body.token)}`;
-  document.body.append(a);
-  a.click();
-  a.remove();
+}
+
+/** The browser's own print page for a PDF request (backup when the server can not make it). */
+export function printPageUrl(r: PdfRequest, job: string | null): string {
+  const p = pdfParams(r);
+  // a big selection's ids would make a web address too long for the server: the print page reads them from the job
+  if (job && r.ids?.length) {
+    p.delete("ids");
+    p.set("job", job);
+  }
+  return `/print?${p}&print=1`;
+}
+
+const PDF_POLL_MS = 2500;
+
+/**
+ * The server makes the PDF in the background (a big selection takes minutes, longer than a web proxy waits for one
+ * request): start a job, ask for its progress every few seconds (onProgress gets the server's message and 0-100),
+ * then download the file with a plain link, so it goes straight to disk. The ids go in the body, so any size works.
+ */
+export async function downloadPdf(r: PdfRequest, fileName: string, onProgress?: (message: string, percent: number) => void): Promise<void> {
+  const call = async (path: string, init?: RequestInit) => {
+    let res: Response;
+    try {
+      res = await fetch(`${API_URL}/api${path}`, init);
+    } catch {
+      return { ok: false, status: 0, body: { message: "Cannot reach the API server. Is it running?" } };
+    }
+    return { ok: res.ok, status: res.status, body: await res.json().catch(() => null) };
+  };
+  const start = await call("/bank/pdf", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ...r, fileName: fileName.replace(/\.pdf$/i, "") }),
+  });
+  if (!start.ok || !start.body?.job) throw new PdfError(start.body?.message || `PDF failed (${start.status})`, start.status, null);
+  const job: string = start.body.job;
+  let misses = 0;
+  for (;;) {
+    await new Promise((resolve) => setTimeout(resolve, PDF_POLL_MS));
+    const s = await call(`/bank/pdf/job/${encodeURIComponent(job)}`);
+    if (!s.ok) {
+      // a short network blip: keep asking for a while before giving up
+      if (s.status === 0 && ++misses < 8) continue;
+      throw new PdfError(s.body?.message || `PDF failed (${s.status})`, s.status, job);
+    }
+    misses = 0;
+    onProgress?.(s.body.message, s.body.percent ?? 0);
+    if (s.body.status === "failed") throw new PdfError(s.body.message || "Could not create the PDF", 500, job);
+    if (s.body.status === "done" && s.body.token) {
+      const a = document.createElement("a");
+      a.href = `${API_URL}/api/bank/pdf/file/${encodeURIComponent(s.body.token)}`;
+      document.body.append(a);
+      a.click();
+      a.remove();
+      return;
+    }
+  }
 }
 
 /** The uploaded original question paper / mark scheme. */

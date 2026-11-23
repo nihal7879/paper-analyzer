@@ -1,0 +1,124 @@
+PAPER ANALYZER - PLANNED CHANGE: PDF DOWNLOAD FOR LARGE SELECTIONS
+Written 2026-11-23. Status: BUILT AND TESTED ON DEV 2026-11-23 (release-20261123b.zip); NOT on production until deployed.
+
+
+1. THE PROBLEM
+--------------
+When a teacher selects a lot of questions (hundreds) and clicks "Download PDF", the file often does not download.
+
+
+2. HOW THE PDF IS MADE NOW
+--------------------------
+  Teacher's browser                 Our server (API)                 Chrome inside the server
+  1. "Make a PDF of these     -->   2. Gets the list of
+     500 questions"                    question ids
+     (then WAITS...)                                           -->   3. Opens our /print page
+                                                                     4. Loads all questions + pictures
+                                                                     5. Prints to PDF, 3 times
+                                                                        (cover, questions, answers)
+                                    6. Joins the 3 parts      <--
+     (...still WAITING)       <--   7. "Ready, here is the token"
+  8. Downloads the file
+
+- Steps 1 to 7 are ONE request: the browser waits until the whole PDF is finished.
+- 10 questions: a few seconds (fine). 500 questions: several minutes.
+- Code: web/src/lib/api.ts (downloadPdf), web/src/components/pdf-download.tsx (runPdf),
+  api/src/papers/papers.controller.ts (POST /bank/pdf, GET /bank/pdf/file/:token), api/src/pdf/pdf.service.ts.
+
+
+3. WHY A BIG SELECTION FAILS (most likely first)
+------------------------------------------------
+ 1. TOO LONG FOR THE LIVE SERVER: nginx in front of the API normally stops any request after 60 seconds
+    (proxy_read_timeout). The code itself allows up to 10 minutes. Result: "PDF failed", no file.
+ 2. BACKUP IS BLOCKED: when the PDF fails, the app opens the print page in a new tab. It does that AFTER waiting,
+    not right after a click, so the browser blocks it as a popup, silently. Result: nothing happens.
+ 3. MEMORY: the server's Chrome builds the whole PDF in memory (past-paper style: about 5 MB per 30 questions,
+    so 500 questions is about 80-100 MB). On a small server it can run out. Result: "Could not create the PDF".
+ 4. LONG WEB ADDRESS: the question ids are put in the /print page's web address (/print?ids=48211,48212,...).
+    2,000 questions is about 14,000 characters; many servers refuse addresses over about 8,000.
+
+
+4. WEB ADDRESS vs REQUEST BODY (simple)
+---------------------------------------
+Like sending a letter:
+  - Web address (URL) = what is written ON THE ENVELOPE. Example: https://site.com/print?ids=101,102,103
+    Small: servers often refuse more than about 8,000 characters.
+  - Request body = the letter INSIDE THE ENVELOPE. Example: { "ids": [101, 102, 103, ... 5000 ids] }
+    Large: thousands of ids are no problem.
+Now: the ids go on the envelope (web address). After the change: only a short job number goes on the envelope
+(/print?job=123) and the print page asks the server for that job's ids (inside the envelope).
+
+
+5. THE NEW WAY (background job)
+-------------------------------
+  Teacher's browser                          Our server
+  1. "Make a PDF of these 500 questions" --> 2. "OK, job #123 started"   (answers in about 1 second)
+                                             3. Builds the PDF in the background...
+  4. Every 3 seconds: "Is #123 ready?"   --> "Not yet, 40%"
+     (shows "Preparing your PDF... 40%") --> "Not yet, 80%"
+                                         --> "Ready!"
+  5. Downloads the file
+
+- Every request is short (about 1 second): the 60-second limit on the live site can never stop it.
+- The teacher sees progress instead of a spinner that looks stuck.
+- Only ONE PDF is built at a time on the server (others wait in line), so a few big PDFs at once can not use up memory.
+- A finished PDF is kept for 10 minutes (as now), then removed.
+
+
+6. THE "CLICK HERE TO OPEN" BUTTON (backup when the server can not make the PDF)
+--------------------------------------------------------------------------------
+The backup already exists: our print page shows the worksheet laid out for printing and opens the browser's
+Print window, where the teacher picks "Save as PDF". The problem is only that it is opened automatically after
+waiting, so the browser blocks it.
+New: the error message shows a button instead:
+    "The PDF could not be prepared on the server.  [ Click here to open ]  then choose 'Save as PDF'."
+- A real click, so the browser allows the new tab -> worksheet -> Print window -> Save as PDF.
+- Made on the teacher's own computer: same questions, pictures and answers; small details (page-number footer)
+  can look a little different by browser; a very large selection can be slow on a weak laptop.
+- It is only a backup: with the background job the server PDF should almost always work.
+
+
+7. QUICK FIX (optional, production server only, no code)
+--------------------------------------------------------
+Raise nginx proxy_read_timeout for /api to 10 minutes (600s). It helps today, but the teacher still sees no
+progress and a very large PDF can still pass 10 minutes. Needs the owner's yes (production server change).
+
+
+8. WHAT WILL CHANGE IN THE CODE
+-------------------------------
+API (api/src):
+  - pdf/pdf.service.ts: a small job list (id, status, percent, file, error); one PDF built at a time;
+    the /print page gets ?job=<id> instead of ?ids=...; progress = cover / questions / answers parts done.
+  - papers/papers.controller.ts: POST /bank/pdf -> returns { job } at once;
+    GET /bank/pdf/job/:id -> { status, percent, message }; GET /bank/pdf/file/:token stays for the download;
+    GET /bank/pdf/job/:id/ids -> the job's question ids (for the print page).
+Web (web/src):
+  - lib/api.ts: start the job, ask every 3 seconds, download when ready.
+  - components/pdf-download.tsx: "Preparing your PDF... 40%" message; on failure the "Click here to open" button.
+  - pages/print.tsx: read ?job=<id> and fetch the ids (in the request body / from the job), keep ?ids= working
+    for small links.
+
+
+9. TEST PLAN (dev first)
+------------------------
+  - 1 question, 30 questions, a whole topic (300+), "Select all" of a subject (1,000+), both PDF styles,
+    answers none / end / separate.
+  - Two big PDFs started at the same time (the second waits in line, both finish).
+  - Make the server fail on purpose: the "Click here to open" button appears and works.
+  - Look at the real PDFs (claude/QA.txt).
+  - Then a release to production only with the owner's yes.
+
+
+10. RESULT ON DEV (2026-11-23)
+-----------------------------
+  - Bad ids: answered at once with "Invalid question ids" (no job made).
+  - 20 parts: started in under 1 s, progress 10% -> 65% -> ready in 13 s, 20 pages.
+  - 600 parts (IAL) + a 150-part PDF started at the same moment: both started in under 1 s; the second showed
+    "Waiting for 1 other PDF to finish..." and started when the first was done. 600 parts: 60 s, 1,033 pages,
+    148 MB; 150 parts: 267 pages. The print page loaded the questions through ?job=<id> (no long web address).
+  - Also fixed while testing (worksheet.tsx clipOf): the 2 mm edge trim cut the first letter of every line of crops
+    drawn tight around the text (the older IAL M1 crops, left edge at 0.125). Now only pictures that reach the page
+    border zone are trimmed; AQA pages checked: single border, nothing cut.
+  - Files changed: api/src/pdf/pdf.service.ts, api/src/papers/papers.controller.ts, web/src/lib/api.ts,
+    web/src/components/pdf-download.tsx, web/src/pages/print.tsx, web/src/components/worksheet.tsx.
+  - Test tool: D:/paper-analyzer-work/ial-math/pdfjob-test.mjs (node pdfjob-test.mjs <subject id> <parts> [answers] [--two]).

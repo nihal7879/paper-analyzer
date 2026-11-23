@@ -46,6 +46,14 @@ Last updated: **2026-11-23**. Older notes: [history/](history/).
 - Earlier boards and subjects are covered in [history/](history/): Physics, KS3, Maths, the Chemistry boards, and AQA / Oxford AQA.
 - Check the real counts with the status script before relying on those notes.
 
+## Production (2026-11-23)
+- Backup first: `D:/paper-analyzer-work/remote-backup-20261123`. Copied with `chem/tools/copy-subjects-to-prod.mjs`:
+  8MA0, 9MA0 (old empty shell replaced), 7356, 7357, 9660 as new subjects; YMA01 REPLACED with the dev version
+  (new mode `REPLACE_SUBJECT=YMA01`: old 21 M1 papers / 22 topics removed, 229 papers / 16 units / 331 topics added).
+- Pictures: `D:/paper-analyzer-upload-maths/papers` (385 Maths folders); the owner uploads with WinSCP.
+- Releases made, NOT deployed yet: `release-20261123.zip` (today's GitLab commit) and `release-20261123b.zip`
+  (+ background PDF jobs from `claude/change.txt`, + worksheet edge-trim fix). Deploy the **b** one.
+
 ## Open items
 - Owner: re-upload 2 Edexcel Maths folders; send the 2 correct IAL mark schemes.
 - Code findings from an earlier review are still not fixed:

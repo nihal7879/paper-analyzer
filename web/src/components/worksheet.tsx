@@ -61,8 +61,10 @@ function numberStyleOf(first: NonNullable<NonNullable<BankEntry["question"]["cro
  * page (at least 2 mm off each side). The mark-scheme pictures are not trimmed: their table borders sit at their edges.
  */
 function clipOf(box: { x0: number; x1: number; edge?: { l: number; r: number } }): React.CSSProperties["clipPath"] {
-  let l = Math.max(2, (0.062 - box.x0) * PAGE_MM);
-  let r = Math.max(2, (box.x1 - 0.935) * PAGE_MM);
+  // (only a picture that reaches the border zone is trimmed: a crop drawn tight around the text, well inside the page,
+  // has no border to hide and the 2 mm would cut the first letter of every line, e.g. the older IAL M1 crops at 0.125)
+  let l = box.x0 < 0.075 ? Math.max(2, (0.062 - box.x0) * PAGE_MM) : 0;
+  let r = box.x1 > 0.922 ? Math.max(2, (box.x1 - 0.935) * PAGE_MM) : 0;
   // AQA / Oxford AQA pages draw their border elsewhere: where it was measured in this picture (box.edge), hide up to that line.
   // Only a plausible border position is trusted (a table or axis line further in must never cut the content or "[n marks]").
   if (box.edge) {

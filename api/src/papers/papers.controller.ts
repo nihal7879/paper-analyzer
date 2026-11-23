@@ -274,13 +274,34 @@ export class BankController {
     return new StreamableFile(file);
   }
 
-  /** Make the PDF (ids in the body, so any size of selection) and return a token to download it with. */
+  /**
+   * Start making the PDF (ids in the body, so any size of selection). Answers at once with a job id; the browser then
+   * asks GET pdf/job/:id every few seconds and downloads with the token when it is ready (no request waits minutes,
+   * so a web proxy's time limit can not cut a big PDF off).
+   */
   @Post('pdf')
-  async preparePdf(@Body() body: { ids?: unknown; paper?: string; answers?: string; title?: string; style?: string; fileName?: string }) {
+  @HttpCode(200)
+  preparePdf(@Body() body: { ids?: unknown; paper?: string; answers?: string; title?: string; style?: string; fileName?: string }) {
     const ids = Array.isArray(body?.ids) ? body.ids.map(String).join(',') : undefined;
     const q: PdfQuery = { ids, paper: body?.paper, answers: body?.answers, title: body?.title, style: body?.style };
     const name = (body?.fileName || q.title || q.paper || 'questions').replace(/[^\w .-]+/g, '').trim().slice(0, 100) || 'questions';
-    return { token: await this.pdf.prepare(q, name) };
+    return { job: this.pdf.start(q, name) };
+  }
+
+  /** A PDF job's progress: { status: queued | running | done | failed, percent, message, token (when done) }. */
+  @Get('pdf/job/:id')
+  pdfJob(@Param('id') id: string) {
+    const s = this.pdf.status(id);
+    if (!s) throw new NotFoundException('This PDF request has expired. Please download it again.');
+    return s;
+  }
+
+  /** The question ids of a PDF job, for the /print page (?job=<id>), instead of a very long web address. */
+  @Get('pdf/job/:id/ids')
+  pdfJobIds(@Param('id') id: string) {
+    const ids = this.pdf.jobIds(id);
+    if (!ids) throw new NotFoundException('This PDF request has expired. Please download it again.');
+    return { ids };
   }
 
   /** The prepared PDF, as a normal file download (the browser saves it straight to disk). */

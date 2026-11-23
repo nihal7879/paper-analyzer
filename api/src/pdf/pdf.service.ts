@@ -17,6 +17,22 @@ export interface PdfQuery {
 
 // no practical limit (same cap as "Select all"); big selections just take longer
 const MAX_QUESTIONS = 5000;
+/** A PDF job (and its id list) is forgotten 30 minutes after it was started. */
+const JOB_KEEP_MS = 30 * 60_000;
+
+interface PdfJob {
+  id: string;
+  q: PdfQuery;
+  name: string;
+  /** the selected question ids (null for a whole paper) */
+  ids: string[] | null;
+  status: 'queued' | 'running' | 'done' | 'failed';
+  percent: number;
+  created: number;
+  /** download token of the finished file */
+  token?: string;
+  error?: string;
+}
 const CHROME_CANDIDATES = [
   'C:/Program Files/Google/Chrome/Application/chrome.exe',
   'C:/Program Files (x86)/Google/Chrome/Application/chrome.exe',
@@ -37,6 +53,71 @@ export class PdfService implements OnModuleDestroy {
 
   constructor(private readonly config: ConfigService<Env, true>) {}
 
+  /**
+   * PDF jobs (2026-11-23): a big selection takes minutes, longer than a web proxy waits for one request. The browser
+   * starts a job (answered at once), asks for its progress every few seconds and downloads the file when it is ready.
+   * Only ONE PDF is made at a time (each opens Chrome on hundreds of pictures); the others wait in line.
+   */
+  private readonly jobs = new Map<string, PdfJob>();
+  private readonly queue: string[] = [];
+  private working = false;
+
+  /** Start a PDF job: checked now (bad input fails at once), made in the background. Returns the job id. */
+  start(q: PdfQuery, name: string): string {
+    this.checkQuery(q);
+    const now = Date.now();
+    for (const [k, j] of this.jobs) if (j.created < now - JOB_KEEP_MS) this.jobs.delete(k);
+    const id = randomUUID();
+    const ids = q.paper ? null : (q.ids ?? '').split(',').filter(Boolean);
+    this.jobs.set(id, { id, q, name, ids, status: 'queued', percent: 0, created: now });
+    this.queue.push(id);
+    void this.work();
+    return id;
+  }
+
+  /** A job's progress for the browser (null = unknown or expired). */
+  status(id: string): { status: PdfJob['status']; percent: number; message: string; token?: string } | null {
+    const j = this.jobs.get(id);
+    if (!j) return null;
+    const ahead = j.status === 'queued' ? this.queue.indexOf(id) + (this.working ? 1 : 0) : 0;
+    const message =
+      j.status === 'queued' ? (ahead > 0 ? `Waiting for ${ahead} other PDF${ahead === 1 ? '' : 's'} to finish…` : 'Starting…')
+      : j.status === 'running' ? `Preparing your PDF… ${j.percent}%`
+      : j.status === 'done' ? 'Ready'
+      : j.error || 'Could not create the PDF';
+    return { status: j.status, percent: j.percent, message, token: j.token };
+  }
+
+  /** The question ids of a job (the /print page reads them here instead of from a very long web address). */
+  jobIds(id: string): string[] | null {
+    return this.jobs.get(id)?.ids ?? null;
+  }
+
+  private async work(): Promise<void> {
+    if (this.working) return;
+    this.working = true;
+    try {
+      for (let id = this.queue.shift(); id; id = this.queue.shift()) {
+        const j = this.jobs.get(id);
+        if (!j) continue;
+        j.status = 'running';
+        j.percent = 2;
+        try {
+          const file = await this.render(j.q, { jobId: j.ids ? j.id : undefined, progress: (p) => (j.percent = p) });
+          j.token = this.keep(file, j.name);
+          j.percent = 100;
+          j.status = 'done';
+        } catch (e) {
+          j.status = 'failed';
+          j.error = e instanceof BadRequestException ? e.message : 'Could not create the PDF on the server';
+          this.log.error(`PDF job ${id} failed: ${(e as Error).message}`);
+        }
+      }
+    } finally {
+      this.working = false;
+    }
+  }
+
   /** Finished PDFs waiting to be downloaded (token -> file), kept for a few minutes. */
   private readonly ready = new Map<string, { file: Buffer; name: string; expires: number }>();
 
@@ -45,12 +126,27 @@ export class PdfService implements OnModuleDestroy {
    * (Reading a big PDF into the page's memory fails in Chrome when the disk is nearly full.)
    */
   async prepare(q: PdfQuery, name: string): Promise<string> {
-    const file = await this.render(q);
+    return this.keep(await this.render(q), name);
+  }
+
+  private keep(file: Buffer, name: string): string {
     const now = Date.now();
     for (const [k, v] of this.ready) if (v.expires < now) this.ready.delete(k);
     const token = randomUUID();
     this.ready.set(token, { file, name, expires: now + 10 * 60_000 });
     return token;
+  }
+
+  /** The checks of render(), without making anything (a job fails at once on bad input). */
+  private checkQuery(q: PdfQuery): void {
+    if (q.paper) {
+      if (!/^[A-Za-z0-9_-]{1,64}$/.test(q.paper)) throw new BadRequestException('Invalid paper');
+      return;
+    }
+    const ids = (q.ids ?? '').split(',').filter(Boolean);
+    if (ids.length === 0) throw new BadRequestException('Choose at least one question');
+    if (ids.length > MAX_QUESTIONS) throw new BadRequestException(`At most ${MAX_QUESTIONS} questions per PDF`);
+    if (!ids.every((id) => /^\d{1,10}$/.test(id))) throw new BadRequestException('Invalid question ids');
   }
 
   take(token: string): { file: Buffer; name: string } | null {
@@ -59,19 +155,18 @@ export class PdfService implements OnModuleDestroy {
     return hit;
   }
 
-  async render(q: PdfQuery): Promise<Buffer> {
+  /**
+   * o.jobId: the /print page gets ?job=<id> and reads the ids from the job (a web address with thousands of ids is
+   * refused by web servers); o.progress: called with 0-100 as the parts are made.
+   */
+  async render(q: PdfQuery, o: { jobId?: string; progress?: (percent: number) => void } = {}): Promise<Buffer> {
+    this.checkQuery(q);
     const params = new URLSearchParams();
     const answers = ['none', 'end', 'inline', 'only'].includes(q.answers ?? '') ? q.answers! : 'none';
-    if (q.paper) {
-      if (!/^[A-Za-z0-9_-]{1,64}$/.test(q.paper)) throw new BadRequestException('Invalid paper');
-      params.set('paper', q.paper);
-    } else {
-      const ids = (q.ids ?? '').split(',').filter(Boolean);
-      if (ids.length === 0) throw new BadRequestException('Choose at least one question');
-      if (ids.length > MAX_QUESTIONS) throw new BadRequestException(`At most ${MAX_QUESTIONS} questions per PDF`);
-      if (!ids.every((id) => /^\d{1,10}$/.test(id))) throw new BadRequestException('Invalid question ids');
-      params.set('ids', ids.join(','));
-    }
+    if (q.paper) params.set('paper', q.paper);
+    else if (o.jobId) params.set('job', o.jobId);
+    else params.set('ids', (q.ids ?? '').split(',').filter(Boolean).join(','));
+    const progress = o.progress ?? (() => undefined);
     const paperStyle = !q.paper && q.style === 'paper';
     // every selection is a worksheet in the paper's layout
     const worksheet = !q.paper;
@@ -83,11 +178,15 @@ export class PdfService implements OnModuleDestroy {
     // questions. (The border and strip repeat on every page of one document, so they can't skip the answers.)
     // The front cover is its own page too, without the border/strip, like the real paper's cover.
     if (worksheet && answers !== 'only') {
-      const pieces = [
-        await this.print(q, params, 'none', { worksheet, paperStyle, part: 'cover' }),
-        await this.print(q, params, 'none', { worksheet, paperStyle, part: 'questions' }),
-      ];
-      if (answers === 'end' || answers === 'inline') pieces.push(await this.print(q, params, 'only', { worksheet, paperStyle }));
+      const withAnswers = answers === 'end' || answers === 'inline';
+      const pieces = [await this.print(q, params, 'none', { worksheet, paperStyle, part: 'cover' })];
+      progress(10);
+      pieces.push(await this.print(q, params, 'none', { worksheet, paperStyle, part: 'questions' }));
+      progress(withAnswers ? 65 : 92);
+      if (withAnswers) {
+        pieces.push(await this.print(q, params, 'only', { worksheet, paperStyle }));
+        progress(92);
+      }
       const out = await PDFDocument.create();
       for (const buf of pieces) {
         const doc = await PDFDocument.load(buf);

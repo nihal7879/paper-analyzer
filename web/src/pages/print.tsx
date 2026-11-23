@@ -1,7 +1,8 @@
 import { useEffect, useMemo } from "react";
 import { useSearchParams } from "react-router";
 import { MathText } from "@/components/math-text";
-import { fileUrl, sourceLine, type AnswerMode } from "@/lib/api";
+import { useQuery } from "@tanstack/react-query";
+import { API_URL, fileUrl, sourceLine, type AnswerMode } from "@/lib/api";
 import { useEntries, usePaperEntries } from "@/lib/bank-api";
 import { Worksheet } from "@/components/worksheet";
 import type { BankEntry } from "@/lib/question-bank";
@@ -22,12 +23,26 @@ export function PrintPage() {
   const [params] = useSearchParams();
   const answers = (["none", "end", "inline", "only"].includes(params.get("answers") ?? "") ? params.get("answers") : "none") as AnswerMode;
   const paperId = params.get("paper");
-  const idList = useMemo(() => (params.get("ids") ?? "").split(",").filter(Boolean), [params]);
+  // ?job=<id>: a big selection's ids are read from the server's PDF job (a web address with thousands of ids is refused)
+  const jobId = params.get("job");
+  const job = useQuery({
+    queryKey: ["pdf-job-ids", jobId],
+    queryFn: async () => {
+      const res = await fetch(`${API_URL}/api/bank/pdf/job/${encodeURIComponent(jobId!)}/ids`);
+      if (!res.ok) throw new Error("This PDF request has expired. Please download it again.");
+      return ((await res.json()) as { ids: string[] }).ids;
+    },
+    enabled: !!jobId,
+    staleTime: Infinity,
+    retry: 2,
+  });
+  const urlIds = useMemo(() => (params.get("ids") ?? "").split(",").filter(Boolean), [params]);
+  const idList = jobId ? (job.data ?? []) : urlIds;
 
   // Only the questions in this PDF are asked from the server (selected ids, in order, or one whole paper).
   const paper = usePaperEntries(paperId);
   const picked = useEntries(paperId ? [] : idList);
-  const loading = paper.isLoading || picked.isLoading;
+  const loading = paper.isLoading || picked.isLoading || (!!jobId && job.isPending);
   const items = useMemo<BankEntry[]>(() => (paperId ? [...paper.entries].sort((a, b) => a.order - b.order) : picked.entries), [paperId, paper.entries, picked.entries]);
 
   // worksheets: only the teacher's own title (none if they left it empty)
