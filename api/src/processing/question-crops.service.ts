@@ -69,6 +69,9 @@ const MIN_TEXT_COVERAGE = 0.5;
 /** Starts missing from a PDF's text layer (checked by eye on the page image). */
 const OVERRIDES: Record<string, { number: string; page: number; y: number }[]> = { '8PH0_s16_01': [{ number: '16(b)', page: 22, y: 0.096 }] };
 
+/** AQA maths (7356 AS, 7357 A-level) and Oxford AQA international maths (9660): their own page layout (see the *AqaMaths finders). */
+const AQA_MATHS = /^(7356|7357|9660)_/;
+
 /** Mark scheme part numbers: "11(a)(i)", "11 (a)(i)", "13a", "*14", "17 (b)*". */
 const MS_NUM = /^\*?\s*(\d{1,2})\s*(?:\(?\s*([a-h])\s*\)?)?\s*(?:\(\s*(i|ii|iii|iv|v|vi|vii|viii)\s*\))?\s*\*?\s*$/i;
 const partKey = (q: string, l: string | null, r: string | null) => `${q}|${l ?? ''}|${r ?? ''}`;
@@ -518,6 +521,15 @@ export class QuestionCropsService {
     const images = await renderPdfPagesAt(pdfBuf, [...new Set(boxes.map((b) => b.page))], 2);
     const rulers = new Map<number, Awaited<ReturnType<typeof ruler>>>();
     const out: { page: number; box: Box }[] = [];
+    // the page's text: a "rule" that runs through a line of text is not a table rule (a yellow highlight over a notes
+    // line, the bar of a fraction): snapping to it would cut that line in half
+    const texts = new Map<number, Item[]>();
+    const { doc, close } = await openPdf(pdfBuf);
+    try {
+      for (const p of new Set(boxes.map((b) => b.page))) texts.set(p, await viewportItems(doc, p).catch(() => [] as Item[]));
+    } finally {
+      await close();
+    }
     for (const b of boxes) {
       const img = images.get(b.page);
       if (!img) {
@@ -527,9 +539,11 @@ export class QuestionCropsService {
       if (!rulers.has(b.page)) rulers.set(b.page, await ruler(img));
       const R = rulers.get(b.page)!;
       const reach = Math.round(0.012 * R.H);
+      const items = (texts.get(b.page) ?? []).filter((i) => i.x + i.w > b.box.x0 && i.x < b.box.x1 && i.base - i.top < 0.03 && i.str.trim().length > 1);
+      const inText = (f: number) => items.some((i) => i.top + 0.002 < f && i.base - 0.001 > f);
       const near = (yFrac: number) => {
         const y = Math.round(yFrac * R.H);
-        for (let d = 0; d <= reach; d++) for (const yy of d === 0 ? [y] : [y - d, y + d]) if (R.rule(yy, b.box.x0, b.box.x1)) return yy / R.H;
+        for (let d = 0; d <= reach; d++) for (const yy of d === 0 ? [y] : [y - d, y + d]) if (R.rule(yy, b.box.x0, b.box.x1) && !inText(yy / R.H)) return yy / R.H;
         return null;
       };
       const y0 = near(b.box.y0);
@@ -607,6 +621,7 @@ export class QuestionCropsService {
   // ------------------------------------------------------------------ question paper: positions from the text
 
   private async findQuestionBoxes(slug: string, pdfBuf: Buffer, parts: Part[]): Promise<Map<number, Plan>> {
+    if (AQA_MATHS.test(slug)) return this.findQuestionBoxesAqaMaths(pdfBuf, parts);
     // (IAL maths "4(i)(a)": the roman numeral comes FIRST; kept under the same key shape (q, letter, roman))
     const romanFirstQ = new Set<string>();
     const firstOfRoman = new Map<string, Part>();
@@ -840,6 +855,102 @@ export class QuestionCropsService {
     }
   }
 
+  /**
+   * AQA / Oxford AQA maths question papers. Every part label carries its full number at the left margin
+   * ("8", "8 (a)", "8 (a) (i)"), the questions sit inside a ruled page frame ("Do not write outside the box") and
+   * there is no "Total for Question" line: a part runs from its label to the next label (or "END OF QUESTIONS").
+   * The printed numbers stay in the crop (these boards keep the paper's own numbering).
+   */
+  private async findQuestionBoxesAqaMaths(pdfBuf: Buffer, parts: Part[]): Promise<Map<number, Plan>> {
+    const byKey = new Map<string, Part>();
+    const firstOfQ = new Map<string, Part>();
+    const firstOfL = new Map<string, Part>();
+    for (const p of parts) {
+      const k = parseNumber(p.number);
+      if (!k) continue;
+      byKey.set(partKey(k.q, k.l, k.r), p);
+      if (!firstOfQ.has(k.q)) firstOfQ.set(k.q, p);
+      if (k.l && !firstOfL.has(`${k.q}|${k.l}`)) firstOfL.set(`${k.q}|${k.l}`, p);
+    }
+    const { doc, close } = await openPdf(pdfBuf);
+    const images = await renderPdfPagesAt(pdfBuf, Array.from({ length: doc.numPages }, (_, i) => i + 1), 2);
+    try {
+      const INSET = 0.006; // clear of the frame's own (double) line
+      const frames: Record<number, Box> = {};
+      const events: { page: number; y: number; part: Part }[] = [];
+      let finish: { page: number; y: number } | null = null;
+      let q = 0;
+      let cur: { l: string | null; r: string | null } = { l: null, r: null };
+      let numX: number | null = null;
+      for (let n = 2; n <= doc.numPages && !finish; n++) {
+        const img = images.get(n);
+        const items = (await viewportItems(doc, n)).filter((i) => i.x < 0.915 && i.base > 0.055 && i.base < 0.928);
+        const pageText = items.map((i) => i.str).join(' ');
+        // spare pages: nothing of a question is printed on them
+        if (/There are no questions printed on this page|Additional page,? if required/i.test(pageText)) continue;
+        if (!items.length && !img) continue;
+        frames[n] = (img && (await pageFrame(img))) ?? { x0: 0.068, y0: 0.063, x1: 0.905, y1: 0.908 };
+        for (const line of linesOf(items)) {
+          if (/END\s+OF\s+QUESTIONS/i.test(line.text)) {
+            finish = { page: n, y: line.top - PAD };
+            break;
+          }
+          // (the labels follow the number: "(ii)" can sit right of x 0.175 when the number itself is printed further in)
+          const left = line.items.filter((i) => i.x < 0.175 || (i.x < 0.25 && /^\(([a-h]|[ivx]+)\)$/.test(i.str)));
+          if (!left.length || left[0].x > 0.14) continue;
+          const t = left.map((i) => i.str).join(' ');
+          const full = /^(\d{1,2})(?:\s*\(([a-h])\))?(?:\s*\((i|ii|iii|iv|v|vi|vii|viii)\))?(?=\s|$)/.exec(t);
+          const bare = full ? null : /^\(([a-h])\)(?:\s*\((i|ii|iii|iv|v|vi|vii|viii)\))?(?=\s|$)/.exec(t);
+          const roman = full || bare ? null : /^\((i|ii|iii|iv|v|vi|vii|viii)\)(?=\s|$)/.exec(t);
+          if (full) {
+            const num = +full[1];
+            const inColumn = numX == null || Math.abs(left[0].x - numX) < 0.055; // (specimen papers print the number at varying x)
+            if (num === q + 1 && inColumn && (full[2] || full[3] || /^\d{1,2}$/.test(left[0].str))) {
+              q = num;
+              if (numX == null || num < 10) numX = left[0].x;
+            } else if (num !== q || !(full[2] || full[3]) || !inColumn) continue;
+            cur = { l: full[2] ?? null, r: full[3] ?? null };
+          } else if (bare && q) cur = { l: bare[1], r: bare[2] ?? null };
+          else if (roman && q && cur.l) cur = { l: cur.l, r: roman[1] };
+          else continue;
+          const part =
+            byKey.get(partKey(String(q), cur.l, cur.r)) ??
+            (cur.r ? byKey.get(partKey(String(q), cur.l, null)) : undefined) ??
+            (cur.l && !cur.r ? firstOfL.get(`${q}|${cur.l}`) : undefined) ??
+            (!cur.l && !cur.r ? firstOfQ.get(String(q)) : undefined);
+          if (!part || events[events.length - 1]?.part.id === part.id) continue;
+          // a tall formula on the label's line (a root sign's bar, a numerator, an index) is printed as separate text
+          // just above the line: the part starts above it (never the "[n marks]" of the part before)
+          const above = items.filter((i) => i.base < line.base - 0.002 && i.base > line.top - 0.01 && i.x > 0.17 && !/marks?\]?$/i.test(i.str));
+          const startTop = above.length ? Math.min(line.top, ...above.map((i) => i.top)) : line.top;
+          events.push({ page: n, y: Math.max(startTop, line.top - 0.02) - PAD, part });
+        }
+      }
+      const pagesWithFrame = Object.keys(frames).map(Number);
+      const lastPage = finish?.page ?? (pagesWithFrame.length ? Math.max(...pagesWithFrame) : doc.numPages);
+      const plans = new Map<number, Plan>();
+      for (let i = 0; i < events.length; i++) {
+        const e = events[i];
+        const end = events[i + 1] ?? finish ?? { page: lastPage, y: 1 };
+        const crops: Plan['crops'] = [];
+        for (let p = e.page; p <= end.page; p++) {
+          const f = frames[p];
+          if (!f) continue;
+          // (at the top only a thin margin inside the frame line: a question that starts the page can have a tall
+          // formula right under it)
+          const y0 = p === e.page ? Math.max(e.y, f.y0 + 0.0025) : f.y0 + INSET;
+          const y1 = p === end.page ? Math.min(end.y, f.y1 - INSET) : f.y1 - INSET;
+          if (y1 - y0 > 0.02) crops.push({ page: p, box: { x0: round(f.x0 + INSET), y0: round(y0), x1: round(f.x1 - INSET), y1: round(y1) } });
+        }
+        // at most 4 regions per part: the question text and the first answer pages (extra blank pages are dropped)
+        if (crops.length) plans.set(e.part.id, { crops: crops.slice(0, 4), erase: null });
+      }
+      return plans;
+    } finally {
+      await close();
+    }
+  }
+
   /** Papers without usable text: the AI says where each part is on its page(s). */
   private async aiQuestionBoxes(slug: string, parts: Part[]): Promise<Map<number, Plan>> {
     const keys = paperKeys(slug);
@@ -880,6 +991,7 @@ export class QuestionCropsService {
   // ------------------------------------------------------------------ mark scheme: table rows
 
   private async findMarkSchemeBoxes(slug: string, pdfBuf: Buffer, parts: Part[]): Promise<Map<number, Plan>> {
+    if (AQA_MATHS.test(slug)) return this.findMarkSchemeBoxesAqaMaths(pdfBuf, parts);
     const partByKey = new Map<string, Part>();
     const firstOfQ = new Map<string, Part>();
     for (const p of parts) {
@@ -1226,6 +1338,231 @@ export class QuestionCropsService {
     }
   }
 
+  /**
+   * AQA / Oxford AQA maths mark schemes. Each part has its own small table under a header row
+   * ("Q | Marking instructions | AO | Marks | Typical solution" or "Q | Answer | Marks | Comments"), labelled "6(a)",
+   * "8(a)(i)" (a repeated label, e.g. "2(c) ALT", is the same part); a question ends with a "Question n Total" row.
+   * A part = from the rule above its label to the bottom rule of its last table. The printed labels stay in the crop.
+   */
+  private async findMarkSchemeBoxesAqaMaths(pdfBuf: Buffer, parts: Part[]): Promise<Map<number, Plan>> {
+    const byKey = new Map<string, Part>();
+    const firstOfQ = new Map<string, Part>();
+    const firstOfL = new Map<string, Part>();
+    for (const p of parts) {
+      const k = parseNumber(p.number);
+      if (!k) continue;
+      byKey.set(partKey(k.q, k.l, k.r), p);
+      if (!firstOfQ.has(k.q)) firstOfQ.set(k.q, p);
+      if (k.l && !firstOfL.has(`${k.q}|${k.l}`)) firstOfL.set(`${k.q}|${k.l}`, p);
+    }
+    const { doc, close } = await openPdf(pdfBuf);
+    const images = await renderPdfPagesAt(pdfBuf, Array.from({ length: doc.numPages }, (_, i) => i + 1), 2);
+    try {
+      type Head = { y0: number; y1: number };
+      // rules = full-width ruled lines; starts = those plus the lines that cross only the first (Q) column: two parts in
+      // ONE table share a tall "Typical solution" cell, so the line between them does not run the full width
+      type Pg = { tx0: number; tx1: number; rules: number[]; starts: number[]; heads: Head[]; border: (ya: number, yb: number) => boolean };
+      type Ev = { page: number; kind: 'start' | 'total'; top: number; part?: Part; head?: Head | null };
+      const pages: Record<number, Pg> = {};
+      const events: Ev[] = [];
+      let cur: { q: string; l: string | null; r: string | null } | null = null;
+      let lastX: { tx0: number; tx1: number } | null = null;
+      let lastCol = 0.16;
+      for (let n = 1; n <= doc.numPages; n++) {
+        const img = images.get(n);
+        if (!img) continue;
+        const items = (await viewportItems(doc, n)).filter((i) => i.base > 0.06 && i.base < 0.94);
+        const lines = linesOf(items);
+        // ("Q 7": some pages print the question number inside the header cell)
+        const isQ = (i: Item) => /^Q(\s*\d{1,2})?$/.test(i.str) && i.x < 0.17;
+        const headLines = lines.filter((l) => l.items.some(isQ) && items.some((i) => /^(Marks?\b|Marking|Answers?\b|Alternative)/i.test(i.str) && Math.abs(i.base - l.base) < 0.012));
+        // (a page with no header row continues the table of the page before: same columns)
+        if (!headLines.length && !lastX) continue;
+        const R = await ruler(img);
+        const qItem = headLines[0]?.items.find(isQ);
+        // (old 2019 Oxford AQA papers: "Q1 | Solution | Mark | Total | Comment")
+        const second = headLines.length ? items.filter((i) => /^(Marking|Answers?\b|Alternative|Solution)/i.test(i.str) && Math.abs(i.base - headLines[0].base) < 0.012).sort((a, b) => a.x - b.x)[0] : undefined;
+        // the first column ends at the vertical rule right of the "Q" heading (header words can be centred in wide columns)
+        let colRight: number = qItem ? (second ? second.x - 0.006 : qItem.x + 0.06) : lastCol;
+        if (qItem) {
+          const y = Math.round(((qItem.top + qItem.base) / 2) * R.H);
+          for (let x = Math.round((qItem.x + qItem.w) * R.W) + 3; x < Math.round(Math.min(colRight + 0.004, 0.3) * R.W); x++)
+            if (R.ink(x, y) && R.ink(x, y - 3) && R.ink(x, y + 3)) {
+              colRight = x / R.W;
+              break;
+            }
+        }
+        // the table's left and right edges: the long ruled line just above the first header row
+        let tx0: number = lastX?.tx0 ?? 0.06;
+        let tx1: number = lastX?.tx1 ?? 0.94;
+        // (start a hair inside the header row: on some old papers the table's top rule sits just below the header text's
+        // top, and searching from the text top up finds the page-title line instead, which runs further left)
+        const hy = headLines.length ? Math.round((headLines[0].top + 0.004) * R.H) : 0;
+        for (let y = hy; y > hy - Math.round(0.02 * R.H) && y > 2; y--) {
+          let a = -1, b = -1, run = 0, best = 0;
+          for (let x = Math.round(0.02 * R.W); x < Math.round(0.98 * R.W); x++) {
+            if (R.ink(x, y)) {
+              run++;
+              if (run > best) { best = run; b = x; a = x - run + 1; }
+            } else run = 0;
+          }
+          if (best > 0.5 * R.W) {
+            tx0 = a / R.W;
+            tx1 = (b + 1) / R.W;
+            break;
+          }
+        }
+        lastX = { tx0, tx1 };
+        lastCol = colRight;
+        // full-width ruled lines of the tables (not the page's title line above the first table / the footer line:
+        // those run on left of the table)
+        const rules: number[] = [];
+        const outX = Math.round(Math.min(0.03, tx0 / 2) * R.W);
+        const yMin = Math.round(0.06 * R.H), yMax = Math.round(0.933 * R.H); // (the footer line sits at about 0.938)
+        for (let y = Math.max(3, yMin); y < yMax; y++) if (R.rule(y, tx0, tx1) && !R.ink(outX, y) && !(rules.length && y / R.H - rules[rules.length - 1] < 0.004)) rules.push(y / R.H);
+        const above = (y: number, within: number) => { const c = rules.filter((r) => r <= y && y - r <= within); return c.length ? c[c.length - 1] : null; };
+        const below = (y: number, within: number) => rules.find((r) => r >= y && r - y <= within) ?? null;
+        const heads: Head[] = headLines.map((l) => ({ y0: above(l.top + 0.002, 0.02) ?? l.top - 0.004, y1: below(l.base - 0.002, 0.03) ?? l.base + 0.006 }));
+        // the table's left border between two heights (two tables are separated by a gap with no border)
+        const bx = Math.round(tx0 * R.W);
+        const border = (ya: number, yb: number) => {
+          const y = Math.round(((ya + yb) / 2) * R.H);
+          for (let x = bx - 3; x <= bx + 4; x++) if (x >= 0 && R.ink(x, y)) return true;
+          return false;
+        };
+        const starts = [...rules];
+        for (let y = Math.max(3, yMin); y < yMax; y++) {
+          const f = y / R.H;
+          if (R.rule(y, tx0, colRight + 0.004) && !R.ink(outX, y) && !starts.some((r) => Math.abs(r - f) < 0.004)) starts.push(f);
+        }
+        starts.sort((a, b) => a - b);
+        pages[n] = { tx0, tx1, rules, starts, heads, border };
+
+        for (const l of lines) {
+          // ("Question 6 Total"; the specimen mark schemes print just "Total" + the marks)
+          // (older mark schemes: "Total" in the instructions column with the marks in their own column, the solution
+          // column's text can share the line: the row is found from the word itself, at its own height)
+          // (old 2019 Oxford AQA header rows have a "Total" column: a header row is never a total row)
+          const totalItem = headLines.includes(l) ? undefined : l.items.find((i) => /^(Question\s*\d{1,2}\s*)?Total$/i.test(i.str.trim()) || /Question\s*\d{1,2}\s*Total/i.test(i.str));
+          if (totalItem || (!headLines.includes(l) && /Question\s*\d{1,2}\s*Total/i.test(l.text))) {
+            events.push({ page: n, kind: 'total', top: totalItem ? totalItem.top : l.top });
+            continue;
+          }
+          if (headLines.includes(l)) {
+            // "Q 7" in the header: the rows under it are question 7's ("(a)", "(b)"), or the whole question when it has no parts
+            const hq = /^Q\s*(\d{1,2})$/.exec(l.items.find(isQ)?.str ?? '');
+            if (hq && (!cur || +hq[1] >= +cur.q)) {
+              cur = { q: String(+hq[1]), l: null, r: null };
+              const whole = byKey.get(partKey(cur.q, null, null));
+              if (whole && !events.some((e) => e.kind === 'start' && e.part!.id === whole.id)) events.push({ page: n, kind: 'start', top: l.base + 0.012, part: whole, head: heads[headLines.indexOf(l)] ?? null });
+            }
+            continue;
+          }
+          // the label = the first item(s) of the first column (text of the next column can start left of the column line
+          // on some pages: only items that touch the first one belong to the label)
+          // (no lower x limit beyond the page margin: a specimen table can be shifted left of the detected table edge)
+          const inCol = l.items.filter((i) => i.x < colRight && i.x > 0.02).sort((a, b) => a.x - b.x);
+          const cell: Item[] = [];
+          for (const i of inCol) {
+            const p = cell[cell.length - 1];
+            if (p && i.x - (p.x + p.w) > 0.008) break;
+            cell.push(i);
+          }
+          if (!cell.length) continue;
+          let text = cell.map((i) => i.str).join('').normalize('NFKD').replace(/\s+/g, '').replace(/ALT\d*$/i, '');
+          if (!text) continue;
+          // (a label typed in a maths font can come out with every character doubled: "22" for "2", "1100" for "10")
+          const digits = /^\d+/.exec(text)?.[0] ?? '';
+          if (digits.length >= 2 && digits.length % 2 === 0 && cell.some((i) => i.str !== i.str.normalize('NFKD')) && [...digits].every((c, j) => c === digits[j - (j % 2)])) text = [...digits].filter((_, j) => j % 2 === 0).join('') + text.slice(digits.length);
+          // ("Q 7": some pages print the question number inside the header cell; "12(b)(i)2": a stray footnote digit after the label)
+          text = text.replace(/^Q(?=\d)/, '').replace(/\)\d$/, ')');
+          if (process.env.AQA_DEBUG) console.log(`p${n} cell ${JSON.stringify(text)} base ${l.base.toFixed(3)} colRight ${colRight.toFixed(3)} tx0 ${tx0.toFixed(3)}`);
+          let k = /^\d/.test(text) ? parseNumber(text) : null;
+          if (!k && cur) {
+            const b = /^\(([a-h])\)(?:\((i|ii|iii|iv|v|vi|vii|viii)\))?$/i.exec(text);
+            const r = b ? null : /^\((i|ii|iii|iv|v|vi|vii|viii)\)$/i.exec(text);
+            if (b) k = { q: cur.q, l: b[1].toLowerCase(), r: b[2]?.toLowerCase() ?? null };
+            else if (r && cur.l) k = { q: cur.q, l: cur.l, r: r[1].toLowerCase() };
+          }
+          if (!k) continue;
+          // a question number never goes back (a stray digit in the first column is not a label)
+          if (cur && +k.q < +cur.q) continue;
+          cur = k;
+          const part =
+            byKey.get(partKey(k.q, k.l, k.r)) ??
+            (k.r ? byKey.get(partKey(k.q, k.l, null)) : undefined) ??
+            (k.l && !k.r ? firstOfL.get(`${k.q}|${k.l}`) : undefined) ??
+            (!k.l && !k.r ? firstOfQ.get(k.q) : undefined) ??
+            // the mark scheme splits a question the paper prints as one part ("12(a)", "12(b)" for question 12)
+            byKey.get(partKey(k.q, null, null));
+          if (!part) continue;
+          const lastStart = [...events].reverse().find((e) => e.kind === 'start');
+          const lastEv = events[events.length - 1];
+          if (lastStart?.part!.id === part.id && lastEv?.kind === 'start') continue;
+          if (events.some((e) => e.kind === 'start' && e.part!.id === part.id)) continue; // a later repeat (notes) never restarts a part
+          // (a maths-font item's box is taller than its ink: never higher than a normal line above the baseline)
+          const top = Math.max(Math.min(...cell.map((i) => i.top)), Math.max(...cell.map((i) => i.base)) - 0.014);
+          const head = [...heads].reverse().find((h) => h.y0 <= top) ?? null;
+          events.push({ page: n, kind: 'start', top, part, head });
+        }
+      }
+      const tablePages = Object.keys(pages).map(Number).sort((a, b) => a - b);
+      const plans = new Map<number, Plan>();
+      for (let i = 0; i < events.length; i++) {
+        const e = events[i];
+        if (e.kind !== 'start') continue;
+        const end = events[i + 1] ?? null;
+        const crops: Plan['crops'] = [];
+        const lastPage = end ? end.page : (tablePages.filter((p) => p >= e.page).pop() ?? e.page);
+        for (let p = e.page; p <= lastPage; p++) {
+          const pg = pages[p];
+          if (!pg) continue;
+          const ruleAbove = (y: number) => { const c = pg.starts.filter((r) => r <= y + 0.003); return c.length ? c[c.length - 1] : null; };
+          const y0 = p === e.page ? (ruleAbove(e.top) ?? e.top - 0.006) : (pg.heads[0]?.y1 ?? pg.rules[0] ?? 0.09);
+          let y1: number;
+          if (end && p === end.page) {
+            let b = ruleAbove(end.top) ?? end.top - 0.006;
+            // (no full-width rule between this part's start and the next row, e.g. a "Total" row whose top line is
+            // broken by the tall solution cell: cut just above that row's text)
+            if (b - y0 < 0.008) b = end.top - 0.004;
+            // the next part starts right under its table's header row: stop above that header
+            const h = end.kind === 'start' ? pg.heads.find((x) => Math.abs(x.y1 - b) < 0.006) : undefined;
+            if (h) b = h.y0;
+            // ...and at the bottom rule of this part's own table, when a gap separates the two tables
+            const prev = pg.rules.filter((r) => r < b - 0.004).pop();
+            y1 = prev != null && prev > y0 + 0.008 && b - prev < 0.09 && !pg.border(prev + 0.002, b - 0.002) ? prev : b;
+          } else y1 = pg.rules.length ? pg.rules[pg.rules.length - 1] : 0.93;
+          if (process.env.AQA_DEBUG) console.log(`crop ${e.part!.number} p${p} y0 ${y0.toFixed(3)} y1 ${y1.toFixed(3)} end ${end ? `${end.kind} p${end.page} ${end.top.toFixed(3)}` : '-'} rules ${pg.rules.map((r) => r.toFixed(3)).join(',')}`);
+          if (y1 - y0 > 0.008) crops.push({ page: p, box: { x0: round(pg.tx0 - 0.002), y0: round(y0), x1: round(pg.tx1 + 0.002), y1: round(y1 + 0.0015) } });
+        }
+        if (!crops.length) continue;
+        const hp = pages[e.page];
+        plans.set(e.part!.id, {
+          crops: crops.slice(0, 4),
+          head: e.head && hp ? { page: e.page, box: { x0: round(hp.tx0 - 0.002), y0: round(e.head.y0), x1: round(hp.tx1 + 0.002), y1: round(e.head.y1 + 0.0012) } } : null,
+          erase: null,
+          eraseMore: [],
+        });
+      }
+      // parts the mark scheme does not split ((b)(i), (b)(ii) under one "6(b)", or a whole question under "5") share the crop
+      const found = new Set(plans.keys());
+      const foundInQ = (qn: string) => parts.filter((o) => found.has(o.id) && parseNumber(o.number)?.q === qn);
+      for (const p of parts) {
+        if (plans.has(p.id)) continue;
+        const x = parseNumber(p.number);
+        if (!x) continue;
+        const letterSib = x.l ? parts.find((o) => found.has(o.id) && parseNumber(o.number)?.q === x.q && parseNumber(o.number)?.l === x.l) : undefined;
+        // (a whole question marked as one block: only its first part was found)
+        const whole = foundInQ(x.q);
+        const sib = letterSib ?? (whole.length === 1 && whole[0].id === firstOfQ.get(x.q)?.id ? whole[0] : undefined);
+        if (sib) plans.set(p.id, { ...plans.get(sib.id)! });
+      }
+      return plans;
+    } finally {
+      await close();
+    }
+  }
+
   /** The printed number inside a hand-drawn box (to white it out): question number in the margin / MS first column. */
   private async numberInside(pdfBuf: Buffer, r: { page: number; box: Box }, number: string, source: Source, exact = false): Promise<Rect | null> {
     const { doc, close } = await openPdf(pdfBuf);
@@ -1322,7 +1659,9 @@ export class QuestionCropsService {
             const x1 = Math.max(...g.map((i) => i.x + i.w));
             const top = Math.min(...g.map((i) => i.top));
             const base = Math.max(...g.map((i) => i.base));
-            const rect: Rect = { page: c.page, x0: x0 - 0.003, y0: top - 0.003, x1: x1 + 0.002, y1: base + 0.004 };
+            // (never above the crop's own top: a label right under the header row would white out the tail of the
+            // header's "Q7" and a piece of the header's bottom rule)
+            const rect: Rect = { page: c.page, x0: x0 - 0.003, y0: Math.max(top - 0.003, c.box.y0 + 0.002), x1: x1 + 0.002, y1: base + 0.004 };
             const ink = await inkInside(hiRes.get(c.page)!, rect);
             if (!ink) continue;
             hiRes.set(c.page, await whiteOut(hiRes.get(c.page)!, ink.px));
@@ -1498,6 +1837,36 @@ async function ruler(img: Buffer) {
       return avg(y) < Math.min(avg(y - 2), avg(y + 2)) - 4;
     },
   };
+}
+
+/** The ruled frame around an AQA question page ("Do not write outside the box"): its four lines, as page fractions. */
+async function pageFrame(img: Buffer): Promise<Box | null> {
+  const R = await ruler(img);
+  const col = (x: number) => {
+    let n = 0, t = 0;
+    for (let y = Math.round(0.25 * R.H); y < Math.round(0.75 * R.H); y += 2) {
+      t++;
+      if (R.ink(x, y)) n++;
+    }
+    return n > t * 0.95;
+  };
+  let left = -1, right = -1;
+  for (let x = Math.round(0.03 * R.W); x < Math.round(0.14 * R.W); x++) if (col(x)) { left = x; break; }
+  for (let x = Math.round(0.97 * R.W); x > Math.round(0.84 * R.W); x--) if (col(x)) { right = x; break; }
+  if (left < 0 || right < 0) return null;
+  const row = (y: number) => {
+    let n = 0, t = 0;
+    for (let x = left + 6; x < right - 6; x += 2) {
+      t++;
+      if (R.ink(x, y)) n++;
+    }
+    return n > t * 0.95;
+  };
+  let top = -1, bottom = -1;
+  for (let y = Math.round(0.03 * R.H); y < Math.round(0.16 * R.H); y++) if (row(y)) { top = y; break; }
+  for (let y = Math.round(0.96 * R.H); y > Math.round(0.8 * R.H); y--) if (row(y)) { bottom = y; break; }
+  if (top < 0 || bottom < 0) return null;
+  return { x0: (left + 1) / R.W, y0: (top + 1) / R.H, x1: right / R.W, y1: bottom / R.H };
 }
 
 /** The printed number's own ink inside a rectangle, ignoring ruled lines that reach into it. */

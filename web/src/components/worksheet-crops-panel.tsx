@@ -112,3 +112,4 @@ function CropSection({ paperId, question, source, title, crops, pages }: { paper
     </section>
   );
 }
+

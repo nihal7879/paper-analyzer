@@ -1,6 +1,6 @@
 # Session notes — current state
 
-Last updated: **2026-11-21**. Older notes: [history/](history/).
+Last updated: **2026-11-23**. Older notes: [history/](history/).
 
 ## Environments
 | | Where | Notes |
@@ -20,19 +20,27 @@ Last updated: **2026-11-21**. Older notes: [history/](history/).
   - Dry run of `copy-subjects-to-prod.mjs` (CODES=8MA0,9MA0, REPLACE_EMPTY=9MA0) was OK.
 - **Owner must re-upload 2 picture folders** from `D:/paper-analyzer-upload3/papers`: `9MA0_s23_31` and `8MA0_s22_21`. Their crops were re-made after a test import overwrote them.
 
-### IAL Maths (YMA01): in progress on dev
-- **Papers:** 208 new papers, plus 21 IAL M1 papers already live.
-- **Skipped:** 2 papers whose mark-scheme file is wrong: Jan 2022 FP1 (the file is the FP3 mark scheme) and Jan 2026 M2A (the file is an Oct 2025 mark scheme). They need the correct files from the owner.
-- **Reading:** all 208 are read (JSON in `claude-extractions`).
-- **Missing crops:** 52 papers had them; all were boxed by hand (`boxes-*.json` / `boxes-ms-*.json`).
-- **Gate:** a re-run with DB retry started at about 13:30 on 2026-11-21, on 121 papers.
-- **Next:**
-  1. Fix what is still flagged (mark-scheme text cut at the sides, autocheck warnings).
-  2. Re-gate until every paper passes.
-  3. Run the final topic, metadata and matrix checks.
-  4. Publish on dev, then refresh similar questions for YMA01.
-  5. PDF sample check (see QA.txt).
-- Work folder: `D:/paper-analyzer-work/ial-math` (`ial-work.json` list, `gate.log`, `dbg/` lists).
+### Maths on dev, all DONE 2026-11-23 (published + similar questions; production NOT touched)
+| Subject (dev id) | Papers published | Similar questions |
+|---|---|---|
+| IAL YMA01 (5) | 229 (21 older M1 + 208 new) | 5,527 |
+| AQA AS 7356 (23) | 16 | 531 |
+| AQA A-level 7357 (24) | 24 | 936 |
+| Oxford AQA 9660 (25) | 59 (units P1, PSM1, P2, S2, M2) | 1,801 |
+- **IAL skipped:** Jan 2022 FP1 (file is the FP3 mark scheme) and Jan 2026 M2A (file is an Oct 2025 mark scheme): need the correct files from the owner. Not in the DB.
+- **Oxford June 2025:** the 5 mark schemes are "Pre-Standardisation" drafts (`oxf-math/draft-ms.txt`); published on dev like the rest.
+- **Oxford June 2025 drafts:** the owner said KEEP them (2026-11-23); swap in the final mark schemes when they come.
+- **Fixed 2026-11-23:** 9660_s19_3 answer pages showed "O7": the MS label white-out reached above the crop top and erased
+  the header "Q" tail. The white-out now stops at the crop top; the paper was re-cut offline (no re-import).
+- **Fix tools** (work folder, run on the gate's flag lines; all write the box files so re-cuts keep them):
+  - `aqa-math/sliverfix.py`: removes empty MS strips at a page top (rows carried over with no text).
+  - `ial-math/rulesnap.py`: MS edge that cuts a line → onto the table rule above the next part's label (or the white gap).
+  - `ial-math/thinfix.py`: one-row MS parts under 0.02 tall → shared crop with touching siblings, or grown evenly.
+  - `aqa-math/setbox.py`: one hand edge (`setbox.py <slug> QP|MS <part> <page> [drop] y0=.. y1=..`).
+  - `math/apply-boxes-4100.mjs` / `apply-ms-4100.mjs`: short boxes now grow EVENLY to 0.0205 (not down into the next row).
+  - After a re-check re-applies boxes, run `chem/tools/fix-colon-num.mjs --apply` again where a printed number was covered.
+- Work folders: `D:/paper-analyzer-work/ial-math`, `aqa-math`, `oxf-math` (`gate.log`, `tally.py`, `dbg/`).
+- PDF samples (2026-11-23): `ial-math/look/pdf/`.
 
 ### Other subjects
 - Earlier boards and subjects are covered in [history/](history/): Physics, KS3, Maths, the Chemistry boards, and AQA / Oxford AQA.
@@ -45,10 +53,13 @@ Last updated: **2026-11-21**. Older notes: [history/](history/).
   - crop text passes should be best-effort;
   - browse page clears the selection on automatic course reset.
 - The admin papers page should be grouped by Subject → Board → Level (not built).
-- Uncommitted code from the IAL work:
-  - `question-crops.service.ts`: old IAL layout, stats mark schemes, notes under tables, roman-first numbering;
-  - `paper-checks.ts`;
-  - `worksheet.tsx`, `pdf-download.tsx`, `api.ts`.
+- Uncommitted code (2026-11-23), built into `api/dist` (the dev API runs it, started with `SKIP_SIMILAR_ON_PUBLISH=1`):
+  - `question-crops.service.ts`: AQA / Oxford AQA maths cutter (QP + MS); old Oxford "Q1 | Solution | Mark | Total"
+    header; MS hand-box snap never snaps onto a "rule" that runs through text (yellow highlights);
+  - `worksheet.tsx`: an identical question crop shared by several parts prints once (like the MS crops).
+  - MS label white-out never reaches above the crop's own top (the "O7" fix).
+  - `api/dist-aqa` is a leftover build of the same code. It shows in `git status` because `.gitignore` has `dist/` only.
+    Never commit it; it can be deleted (aqa-gate.sh falls back to `dist` when it is gone).
 
 ## First things in a new session
 1. Do not assume background jobs are running. Check for node processes and the gate lock (`ial-math/.gate-lock`).

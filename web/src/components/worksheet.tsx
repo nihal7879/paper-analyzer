@@ -317,7 +317,19 @@ function QuestionBlock({ q, n, typed }: { q: WholeQuestion; n: number; typed: bo
       <p className="ws-source">Source: {sourceLine(q.meta, q.base)}</p>
     </>
   );
-  const crops = q.parts.flatMap((p) => (p.question.crops ?? []).filter((c) => c.path).map((c, k) => ({ p, c, k })));
+  // parts printed as one block on the paper ("(a) Find (i) … (ii) … (iii) …") can share one identical crop: print it once
+  const seenCrop = new Set<string>();
+  const crops = q.parts.flatMap((p) =>
+    (p.question.crops ?? [])
+      .filter((c) => {
+        if (!c.path) return false;
+        const key = `${c.page}:${c.box.x0},${c.box.y0},${c.box.x1},${c.box.y1}`;
+        if (seenCrop.has(key)) return false;
+        seenCrop.add(key);
+        return true;
+      })
+      .map((c, k) => ({ p, c, k })),
+  );
   // The writing space is kept as printed. If the question is only a few lines too tall for one worksheet page, whole
   // ruled lines are taken off the very end so it stays on one page like the paper (no nearly empty page after it).
   // If it is taller than that (a question that fills several pages of the paper), the ruled lines carry on at the top
